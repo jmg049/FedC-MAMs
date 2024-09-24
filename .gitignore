@@ -1,0 +1,9 @@
+DATA/*
+.vscode/*
+config/*.yaml
+
+**/__pycache__/**
+experiments/*
+
+poetry.lock
+metric_output/*

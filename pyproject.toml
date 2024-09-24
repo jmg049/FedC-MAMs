@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "federated-cmams"
+version = "0.1.0"
+description = "Federated Cross-Modal Association Models"
+authors = ["Jack Geraghty <jgeraghty049@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+torch = "^2.4.1"
+torchaudio = "^2.4.1"
+torchvision = "^0.19.1"
+tqdm = "^4.66.5"
+rich = "^13.8.1"
+textual = "^0.79.1"
+numpy = "^2.1.1"
+matplotlib = "^3.9.2"
+pandas = "^2.2.2"
+scikit-learn = "^1.5.2"
+modalities = {git = "https://github.com/jmg049/Modalities.git"}
+pyyaml = "^6.0.2"
+seaborn = "^0.13.2"
+opentsne = "^1.0.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

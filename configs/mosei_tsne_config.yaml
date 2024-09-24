@@ -1,0 +1,24 @@
+_config_path: config/mosei_tsne_config.yaml
+axis_label_font_size: 16
+dpi: 300
+frame_on: true
+grid: false
+grid_alpha: 0.5
+grid_color: black
+grid_style: --
+label_mapping:
+  0: Negative
+  1: Neutral
+  2: Positive
+learning_rate: auto
+legend_font_size: 20
+marker_size: 16
+marker_styles:
+- o
+- s
+n_iter: 1000
+n_iter_without_progress: 300
+perplexity: 30.0
+tick_label_font_size: 14
+title_font_size: 28
+use_tex: true
