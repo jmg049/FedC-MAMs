@@ -1,7 +1,6 @@
 experiment:
-  name: "MOSEI (CMAMs V-A): Baseline Training"
+  name: "MOSEI (CMAMs T-V): Baseline Training"
   debug: False
-  run_id: 3
 
 data:
   train:
@@ -33,7 +32,7 @@ data:
 
 model:
   name: "UttFusionModel"
-  pretrained_path: "experiments/mosei/models/MOSEI (Classification): Baseline Training/3/mosei_model_UAR_AVL_best.pth"
+  pretrained_path: "experiments/mosei/models/MOSEI (Classification): Baseline Training/{run_id}/mosei_model_UAR_AVL_best.pth"
   kwargs:
     input_size_a: 74
     embd_size_a: 96
@@ -51,12 +50,11 @@ model:
 cmam:
   name: "BasicCMAM"
   input_encoder_info:
-    V_feat:
-      name: "LSTMEncoder"
-      input_size: 35
-      hidden_size: 96
-      embd_method: "maxpool"
-  target_modality: "A_feat"
+    L_feat:
+      name: "TextCNN"
+      input_size: 768
+      embd_size: 96
+  target_modality: "V_feat"
   kwargs:
     assoc_net_input_size: 96
     assoc_net_hidden_size: 256
@@ -65,7 +63,7 @@ cmam:
     assoc_use_bn: True 
     grad_clip: 0.5
 
-cmam_training:
+training:
   epochs: 25
   num_modalities: 3
   batch_size: 256
@@ -81,7 +79,7 @@ cmam_training:
     mae_weight: 1.0
   cls_criterion: "cross_entropy"
   cls_weight: 0.05
-  target_missing_type: "zvz"
+  target_missing_type: "zzl"
   scheduler: "lambda"
   scheduler_args:
     lr_lambda: "lambda epoch: 1.0 - max(0, epoch + epoch_count - niter) / float(niter_decay + 1)"
@@ -93,8 +91,8 @@ cmam_training:
 logging:
   save_metric: "loss"
   log_path: "experiments/mosei/logs/{experiment_name}/{run_id}/"
-  model_output_path: "experiments/mosei/models/{experiment_name}/cmam_V_to_A_{save_metric}_{run_id}.pth" 
-  metrics_paths: "experiments/mosei/metrics/{experiment_name}/{run_id}/cmam_V_to_A"
+  model_output_path: "experiments/mosei/models/{experiment_name}/cmam_T_to_V_{save_metric}_{run_id}.pth" 
+  metrics_paths: "experiments/mosei/metrics/{experiment_name}/{run_id}/cmam_T_to_V"
 
 metrics:
   prediction_metrics:

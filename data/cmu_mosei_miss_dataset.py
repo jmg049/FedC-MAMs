@@ -20,6 +20,16 @@ MASK_LOOKUP = {
     6: "zvt",
 }
 
+INDEX_LOOKUP = {
+    "avt": "1,1,1",
+    "azz": "1,0,0",
+    "zvz": "0,1,0",
+    "zzt": "0,0,1",
+    "avz": "1,1,0",
+    "azt": "1,0,1",
+    "zvt": "0,1,1",
+}
+
 
 class cmumoseimissdataset(Dataset):
     @staticmethod
@@ -30,6 +40,7 @@ class cmumoseimissdataset(Dataset):
         self,
         data_fp: Union[str, Path, os.PathLike],
         split: str,
+        is_cmam_dataset: tuple[bool, str] = (False, ""),
         target_modality: Modality = Modality.MULTIMODAL,
         labels_key: str = "classification_labels",
         **kwargs,
@@ -46,6 +57,7 @@ class cmumoseimissdataset(Dataset):
             data = pickle.load(f)
 
         assert labels_key in data[split], f"Invalid labels_key: {labels_key}"
+        self.is_cmam_dataset = is_cmam_dataset
 
         data_split = data[split]
         self.all_A = data_split["audio"]
@@ -54,7 +66,20 @@ class cmumoseimissdataset(Dataset):
         self.label = data_split[labels_key]
         self.label = np.array(self.label, dtype=int64)
 
-        if split != "train":  # val && tst
+        ## In the C-MAM case, we only want to look at a particular missing type, that is the target_miss_type
+        if is_cmam_dataset[0]:
+            target_miss_type = is_cmam_dataset[1]
+            assert (
+                target_miss_type in MASK_LOOKUP.values()
+            ), f"Invalid target_miss_type: {target_miss_type}"
+            self.target_miss_type = target_miss_type
+
+            m_index = INDEX_LOOKUP[target_miss_type]
+            m_index = [int(i) for i in m_index.split(",")]
+            self.missing_index = torch.tensor([m_index] * len(self.label)).long()
+            self.miss_type = [target_miss_type] * len(self.label)
+
+        elif split != "train":  # val && tst
             self.missing_index = torch.tensor(
                 [
                     [1, 0, 0],  # AZZ
@@ -70,6 +95,7 @@ class cmumoseimissdataset(Dataset):
             self.miss_type = ["azz", "zvz", "zzl", "avz", "azl", "zvl", "AVL"] * len(
                 self.label
             )
+
         else:  # trn
             self.missing_index = [
                 [1, 0, 0],  # AZZ
@@ -82,15 +108,21 @@ class cmumoseimissdataset(Dataset):
             self.miss_type = ["azz", "zvz", "zzl", "avz", "azl", "zvl"]
         if not isinstance(target_modality, Modality):
             target_modality = Modality.from_str(target_modality)
-        assert target_modality in [
-            Modality.AUDIO,
-            Modality.TEXT,
-            Modality.VIDEO,
-            Modality.MULTIMODAL,
-        ], f"Invalid target_modality: {target_modality}, must be one of [{Modality.AUDIO}, {Modality.TEXT}, {Modality.VIDEO}, {Modality.MULTIMODAL}]"
+        assert (
+            target_modality
+            in [
+                Modality.AUDIO,
+                Modality.TEXT,
+                Modality.VIDEO,
+                Modality.MULTIMODAL,
+            ]
+        ), f"Invalid target_modality: {target_modality}, must be one of [{Modality.AUDIO}, {Modality.TEXT}, {Modality.VIDEO}, {Modality.MULTIMODAL}]"
         self.target_modality = target_modality
         # set collate function
         self.manual_collate_fn = True
+
+    def __str__(self) -> str:
+        return f"CMU-MOSEI Missing Dataset ({self.split}) - Target Modality: {self.target_modality} - CMAM? {self.is_cmam_dataset} - {len(self)} samples"
 
     def __getitem__(self, index):
         if self.split != "train":
@@ -108,12 +140,8 @@ class cmumoseimissdataset(Dataset):
             miss_type = self.miss_type[_miss_i]
         label = torch.tensor(self.label[feat_idx])
 
-        # process A_feat
         A_feat = torch.from_numpy(self.all_A[feat_idx][()]).float()
-
-        # process V_feat
         V_feat = torch.from_numpy(self.all_V[feat_idx][()]).float()
-        # proveee L_feat
         L_feat = torch.from_numpy(self.all_L[feat_idx][()]).float()
 
         match self.target_modality:

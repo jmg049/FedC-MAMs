@@ -1,8 +1,7 @@
 experiment:
-  name: "MOSEI (CMAMs A-T): Baseline Training"
+  name: "MOSEI (CMAMs V-T): Baseline Training"
   debug: False
-  run_id: 2
-  
+
 data:
   train:
     dataset: "mosei"
@@ -33,7 +32,7 @@ data:
 
 model:
   name: "UttFusionModel"
-  pretrained_path: "experiments/mosei/models/MOSEI (Classification): Baseline Training/2/mosei_model_UAR_AVL_best.pth"
+  pretrained_path: "experiments/mosei/models/MOSEI (Classification): Baseline Training/{run_id}/mosei_model_UAR_AVL_best.pth"
   kwargs:
     input_size_a: 74
     embd_size_a: 96
@@ -51,9 +50,9 @@ model:
 cmam:
   name: "BasicCMAM"
   input_encoder_info:
-    A_feat:
+    V_feat:
       name: "LSTMEncoder"
-      input_size: 74
+      input_size: 35
       hidden_size: 96
       embd_method: "maxpool"
   target_modality: "L_feat"
@@ -65,7 +64,7 @@ cmam:
     assoc_use_bn: True 
     grad_clip: 0.5
 
-cmam_training:
+training:
   epochs: 25
   num_modalities: 3
   batch_size: 256
@@ -81,7 +80,7 @@ cmam_training:
     mae_weight: 1.0
   cls_criterion: "cross_entropy"
   cls_weight: 0.05
-  target_missing_type: "azz"
+  target_missing_type: "zvz"
   scheduler: "lambda"
   scheduler_args:
     lr_lambda: "lambda epoch: 1.0 - max(0, epoch + epoch_count - niter) / float(niter_decay + 1)"
@@ -93,8 +92,8 @@ cmam_training:
 logging:
   save_metric: "loss"
   log_path: "experiments/mosei/logs/{experiment_name}/{run_id}/"
-  model_output_path: "experiments/mosei/models/{experiment_name}/cmam_A_to_T_{save_metric}_{run_id}.pth" 
-  metrics_paths: "experiments/mosei/metrics/{experiment_name}/{run_id}/cmam_A_to_T"
+  model_output_path: "experiments/mosei/models/{experiment_name}/cmam_V_to_T_{save_metric}_{run_id}.pth" 
+  metrics_paths: "experiments/mosei/metrics/{experiment_name}/{run_id}/cmam_V_to_T"
 
 metrics:
   prediction_metrics:
@@ -159,13 +158,3 @@ metrics:
       function: sklearn.metrics.confusion_matrix
       kwargs:
         labels: [0, 1, 2]
-  rec_metrics:
-    MAE:
-      function: "sklearn.metrics.mean_absolute_error"
-    MSE:
-      function: "sklearn.metrics.mean_squared_error"
-    CosineSimilarity:
-      function: "metrics.similarity.cosine_similarity"
-
-    
-

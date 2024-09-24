@@ -52,11 +52,12 @@ class StandardConfig(Config):
     metrics: MetricsConfig
 
     @classmethod
-    def load(cls, path: Union[str, Path, PathLike]) -> "StandardConfig":
+    def load(cls, path: Union[str, Path, PathLike], run_id: int) -> "StandardConfig":
         with open(path, "r") as f:
             data = yaml.safe_load(f)
 
         experiment_config = data["experiment"]
+        experiment_config["run_id"] = run_id
         experiment_config = ExperimentConfig.from_dict(experiment_config)
 
         data_config = data["data"]

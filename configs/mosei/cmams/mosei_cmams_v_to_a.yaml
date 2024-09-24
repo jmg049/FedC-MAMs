@@ -1,7 +1,6 @@
 experiment:
-  name: "MOSEI (CMAMs V-T): Baseline Training"
+  name: "MOSEI (CMAMs V-A): Baseline Training"
   debug: False
-  run_id: 1
 
 data:
   train:
@@ -33,7 +32,7 @@ data:
 
 model:
   name: "UttFusionModel"
-  pretrained_path: "experiments/mosei/models/MOSEI (Classification): Baseline Training/1/mosei_model_UAR_AVL_best.pth"
+  pretrained_path: "experiments/mosei/models/MOSEI (Classification): Baseline Training/{run_id}/mosei_model_UAR_AVL_best.pth"
   kwargs:
     input_size_a: 74
     embd_size_a: 96
@@ -56,7 +55,7 @@ cmam:
       input_size: 35
       hidden_size: 96
       embd_method: "maxpool"
-  target_modality: "L_feat"
+  target_modality: "A_feat"
   kwargs:
     assoc_net_input_size: 96
     assoc_net_hidden_size: 256
@@ -65,7 +64,7 @@ cmam:
     assoc_use_bn: True 
     grad_clip: 0.5
 
-cmam_training:
+training:
   epochs: 25
   num_modalities: 3
   batch_size: 256
@@ -93,8 +92,8 @@ cmam_training:
 logging:
   save_metric: "loss"
   log_path: "experiments/mosei/logs/{experiment_name}/{run_id}/"
-  model_output_path: "experiments/mosei/models/{experiment_name}/cmam_V_to_T_{save_metric}_{run_id}.pth" 
-  metrics_paths: "experiments/mosei/metrics/{experiment_name}/{run_id}/cmam_V_to_T"
+  model_output_path: "experiments/mosei/models/{experiment_name}/cmam_V_to_A_{save_metric}_{run_id}.pth" 
+  metrics_paths: "experiments/mosei/metrics/{experiment_name}/{run_id}/cmam_V_to_A"
 
 metrics:
   prediction_metrics:
@@ -159,13 +158,4 @@ metrics:
       function: sklearn.metrics.confusion_matrix
       kwargs:
         labels: [0, 1, 2]
-  rec_metrics:
-    MAE:
-      function: "sklearn.metrics.mean_absolute_error"
-    MSE:
-      function: "sklearn.metrics.mean_squared_error"
-    CosineSimilarity:
-      function: "metrics.similarity.cosine_similarity"
-
-    
 

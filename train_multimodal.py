@@ -14,7 +14,7 @@ from tqdm import tqdm
 from config import StandardConfig, resolve_model_name
 from data import build_dataloader
 from missing_index import missing_pattern
-from models import kaiming_init
+from models import kaiming_init, check_protocol_compliance, MultimodalModelProtocol
 from utils import clean_checkpoints, print_all_metrics_tables
 from utils.logger import get_logger
 from utils.metric_recorder import MetricRecorder
@@ -26,11 +26,14 @@ console = Console()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, required=True)
+    parser.add_argument(
+        "-c", "--config", type=str, required=True, help="Path to config file"
+    )
+    parser.add_argument("--run_id", type=int, default=-1, help="Run ID")
     args = parser.parse_args()
 
     try:
-        config = StandardConfig.load(args.config)
+        config = StandardConfig.load(args.config, args.run_id)
     except Exception as e:
         console.print(f"Error loading config:\n{e}")
         exit(1)
@@ -79,10 +82,12 @@ if __name__ == "__main__":
 
     model_cls = resolve_model_name(config.model.name)
     model = model_cls(**config.model.kwargs)
+    check_protocol_compliance(model, MultimodalModelProtocol)
     kaiming_init(
         model,
     )
-
+    model.to(device)
+    model.set_metric_recorder(MetricRecorder(config=config.metrics))
     total_iters = 0  # the total number of training iterations
 
     best_eval_epoch = -1  # record the best eval epoch
@@ -108,9 +113,6 @@ if __name__ == "__main__":
         scheduler = config.get_scheduler(optimizer=optimizer)
         console.print("Scheduler created")
         logger.info(f"Scheduler created\n{scheduler}")
-
-    model.to(device)
-    model.set_metric_recorder(MetricRecorder(config=config.metrics))
 
     for epoch in tqdm(
         range(1, epochs + 1), desc="Epochs", unit="epoch", total=epochs, colour="yellow"
@@ -281,7 +283,17 @@ if __name__ == "__main__":
                 os.path.join(config.logging.metrics_path, "validation_plots"),
             ]
         )
+        to_store = clean_checkpoints(
+            os.path.dirname(config.logging.model_output_path), best_eval_epoch
+        )
+    assert to_store is not None, "No model to store"
 
+    console.print("Training complete")
+
+    os.rename(to_store, to_store.replace(f"_{best_eval_epoch}.pth", "_best.pth"))
+    console.print(
+        f"Best model stored at {to_store.replace(f'_{best_eval_epoch}.pth', '_best.pth')}"
+    )
     # test
     if do_test:
         console.print("Testing model")
@@ -290,9 +302,7 @@ if __name__ == "__main__":
 
         model.load_state_dict(
             torch.load(
-                config.logging.model_output_path.replace(
-                    ".pth", f"_{best_eval_epoch}.pth"
-                ),
+                config.logging.model_output_path.replace(".pth", "_best.pth"),
                 weights_only=True,
             )
         )
@@ -330,13 +340,3 @@ if __name__ == "__main__":
         with open(file_name, "w") as f:
             json_str = json.dumps(epoch_metrics, indent=4)
             f.write(json_str)
-
-    to_store = clean_checkpoints(
-        os.path.dirname(config.logging.model_output_path), best_eval_epoch
-    )
-    assert to_store is not None, "No model to store"
-    os.rename(to_store, to_store.replace(f"_{best_eval_epoch}.pth", "_best.pth"))
-    console.print(
-        f"Best model stored at {to_store.replace(f'_{best_eval_epoch}.pth', '_best.pth')}"
-    )
-    console.print("Training complete")

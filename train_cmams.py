@@ -15,7 +15,13 @@ from tqdm import tqdm
 from config import CMAMConfig, resolve_model_name
 from data import build_dataloader
 from missing_index import missing_pattern
-from utils import clean_checkpoints, print_all_metrics_tables
+from models import CMAMProtocol, MultimodalModelProtocol, check_protocol_compliance
+from utils import (
+    call_latex_to_image,
+    clean_checkpoints,
+    prepare_path,
+    print_all_metrics_tables,
+)
 from utils.logger import get_logger
 from utils.metric_recorder import MetricRecorder
 
@@ -23,19 +29,19 @@ add_modality("VIDEO")
 
 console = Console()
 
-
-# Function to safely escape file paths
-def escape_path(path):
-    return shlex.quote(os.path.abspath(path))
-
+# Set to False if your terminal does not support rendering an image
+RENDER_LOSS_FN = True
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, required=True)
+    parser.add_argument(
+        "-c", "--config", type=str, required=True, help="Path to config file"
+    )
+    parser.add_argument("--run_id", type=int, default=-1, help="Run ID")
     args = parser.parse_args()
 
     try:
-        config = CMAMConfig.load(args.config)
+        config = CMAMConfig.load(args.config, args.run_id)
     except Exception as e:
         console.print(f"Error loading config:\n{e}")
         exit(1)
@@ -49,7 +55,7 @@ if __name__ == "__main__":
     epochs = config.training.epochs
     batch_size = config.training.batch_size
     device = config.experiment.device
-    run_idx = config.experiment.run_id
+    run_id = config.experiment.run_id
 
     os.makedirs(result_dir, exist_ok=True)
 
@@ -79,6 +85,7 @@ if __name__ == "__main__":
     logger.info("The number of validation samples = %d" % len(val_dataset.dataset))
     if do_test:
         logger.info("The number of test samples = %d" % len(tst_dataset.dataset))
+    console.print(f"Validation dataset {val_dataset.dataset}")
 
     total_iters = epochs * dataset_size
 
@@ -88,7 +95,9 @@ if __name__ == "__main__":
     model_cls = resolve_model_name(config.model.name)
     model = model_cls(**config.model.kwargs)
 
-    pretrained_path = config.model.pretrained_path
+    check_protocol_compliance(model, MultimodalModelProtocol)
+
+    pretrained_path = config.model.pretrained_path.format(run_id=run_id)
     assert os.path.exists(
         pretrained_path
     ), f"Pretrained model not found at {pretrained_path}"
@@ -122,9 +131,9 @@ if __name__ == "__main__":
     # cmam_cfg.pop("name")  # safe since we just used it
     cmam = cmam_cls(
         input_encoder_info=input_encoder_info,
-        target_modality=target_modality,
-        **cmam_cfg.kwargs,
+        **cmam_cfg.__dict__(),
     )
+    check_protocol_compliance(cmam, CMAMProtocol)
     cmam.set_predictions_metric_recorder(MetricRecorder(config.prediction_metrics))
     cmam.set_rec_metric_recorder(MetricRecorder(config.rec_metrics))
 
@@ -141,21 +150,31 @@ if __name__ == "__main__":
         console.print("Scheduler created")
         logger.info(f"Scheduler created\n{scheduler}")
 
-    rec_criterion_kwargs = config.training.rec_criterion_kwargs
-    rec_criterion = config.get_criterion(
-        config.training.rec_criterion, rec_criterion_kwargs
-    )
+    criterion_kwargs = config.training.criterion_kwargs
 
-    cls_criterion_kwargs = config.training.cls_criterion_kwargs
-    cls_criterion = config.get_criterion(
-        config.training.cls_criterion, cls_criterion_kwargs
-    )
+    ## calculate x-dim and z-dim for MI loss
+
+    x_dims = [
+        config.cmam.input_encoder_info[k]["input_size"]
+        for k in config.cmam.input_encoder_info.keys()
+    ]
+    z_dim = config.cmam.assoc_net_output_size
+
+    criterion_kwargs["x_dims"] = x_dims
+    criterion_kwargs["z_dim"] = z_dim
+
+    cmam_criterion = config.get_criterion(config.training.criterion, criterion_kwargs)
 
     console.print("Optimizer and criterion created")
-    logger.info(
-        f"Optimizer and criterion created\n{optimizer}\n{rec_criterion}\n{cls_criterion}"
-    )
+    logger.info(f"Optimizer and criterion created\n{optimizer}\n{cmam_cfg}")
 
+    loss_fn_tex = cmam_criterion.to_latex()
+    with open(os.path.join(result_dir, "loss_fn.tex"), "w") as f:
+        f.write(loss_fn_tex)
+    if RENDER_LOSS_FN:
+        call_latex_to_image(
+            latex_str=loss_fn_tex,
+        )
     for epoch in tqdm(
         range(1, epochs + 1), desc="Epochs", unit="epoch", total=epochs, colour="yellow"
     ):
@@ -188,11 +207,8 @@ if __name__ == "__main__":
                 labels=data["label"],
                 optimizer=optimizer,
                 device=device,
-                rec_criterion=rec_criterion,
-                pred_criterion=cls_criterion,
+                cmam_criterion=cmam_criterion,
                 trained_model=model,
-                rec_weight=config.training.rec_weight,
-                cls_weight=config.training.cls_weight,
             )
             epoch_rec_metric_recorder.update_from_dict(results)
             # epoch_cls_metric_recorder.update_from_dict(results["cls_metrics"])
@@ -241,14 +257,10 @@ if __name__ == "__main__":
                 batch=batch,
                 labels=batch["label"],
                 device=device,
-                rec_criterion=rec_criterion,
-                pred_criterion=cls_criterion,
+                cmam_criterion=cmam_criterion,
                 trained_model=model,
-                rec_weight=config.training.rec_weight,
-                cls_weight=config.training.cls_weight,
             )
             epoch_rec_metric_recorder.update_from_dict(results)
-            # epoch_cls_metric_recorder.update_from_dict(results["cls_metrics"])
 
         validation_cm = epoch_rec_metric_recorder.get("ConfusionMatrix", default=None)
         if validation_cm is not None:
@@ -257,8 +269,6 @@ if __name__ == "__main__":
             del epoch_rec_metric_recorder.results["ConfusionMatrix"]
 
         validation_rec_metrics = epoch_rec_metric_recorder.get_average_metrics()
-        # validation_cls_metrics = epoch_cls_metric_recorder.get_average_metrics()
-
         console.rule("Validation Metrics")
 
         print_all_metrics_tables(
@@ -280,11 +290,8 @@ if __name__ == "__main__":
                 results = cmam.evaluate(
                     batch=batch,
                     labels=batch["label"],
-                    rec_criterion=rec_criterion,
-                    pred_criterion=cls_criterion,
+                    cmam_criterion=cmam_criterion,
                     device=device,
-                    rec_weight=config.training.rec_weight,
-                    cls_weight=config.training.cls_weight,
                     trained_model=model,
                 )
 
@@ -312,10 +319,6 @@ if __name__ == "__main__":
             )
 
         # record epoch with best result as per the target metric
-        save_condition = config.logging.save_condition
-        uar = validation_rec_metrics[f"UAR_{save_condition}"]
-        acc = validation_rec_metrics[f"Accuracy_{save_condition}"]
-        f1 = validation_rec_metrics[f"F1_Weighted_{save_condition}"]
 
         if config.logging.save_metric == "loss":
             if validation_rec_metrics["loss"] < best_eval_loss:
@@ -384,11 +387,8 @@ if __name__ == "__main__":
             results = cmam.evaluate(
                 batch=batch,
                 labels=batch["label"],
-                rec_criterion=rec_criterion,
-                pred_criterion=cls_criterion,
+                cmam_criterion=cmam_criterion,
                 device=device,
-                rec_weight=config.training.rec_weight,
-                cls_weight=config.training.cls_weight,
                 trained_model=model,
                 return_eval_data=True,
             )
@@ -461,10 +461,6 @@ if __name__ == "__main__":
         )
 
         if config.training.do_tsne:
-
-            def prepare_path(path):
-                return os.path.abspath(path)
-
             command = f"""python visualisation/tsne.py \
                 --tsne_config_path "{prepare_path(f'configs/{dataset_name}_tsne_config.yaml')}" \
                 --rec_labels "{prepare_path(os.path.join(result_dir, 'predictions_test.npy'))}" \
@@ -473,7 +469,6 @@ if __name__ == "__main__":
                 --gt_embeddings "{prepare_path(os.path.join(result_dir, 'target_embds_test.npy'))}" \
                 --output "{prepare_path(output_path)}" \
                 --title "{title}"  """
-            args = shlex.split(command)
             console.print(f"Running t-SNE visualization with command: {command}")
 
             # Wrap the Python command with nohup and redirect output

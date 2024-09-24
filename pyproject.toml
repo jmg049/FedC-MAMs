@@ -22,6 +22,7 @@ modalities = {git = "https://github.com/jmg049/Modalities.git"}
 pyyaml = "^6.0.2"
 seaborn = "^0.13.2"
 opentsne = "^1.0.2"
+ipython = "^8.27.0"
 
 
 [build-system]

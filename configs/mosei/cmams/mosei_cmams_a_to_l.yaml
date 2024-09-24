@@ -1,7 +1,6 @@
 experiment:
-  name: "MOSEI (CMAMs V-A): Baseline Training"
+  name: "MOSEI (CMAMs A-T): Baseline Training"
   debug: False
-  run_id: 2
 
 data:
   train:
@@ -12,6 +11,7 @@ data:
     shuffle: True
     drop_last: True
     pin_memory: True
+
 
 
   validation:
@@ -31,9 +31,10 @@ data:
     drop_last: True
     pin_memory: True
 
+
 model:
   name: "UttFusionModel"
-  pretrained_path: "experiments/mosei/models/MOSEI (Classification): Baseline Training/2/mosei_model_UAR_AVL_best.pth"
+  pretrained_path: "experiments/mosei/models/MOSEI (Classification): Baseline Training/{run_id}/mosei_model_UAR_AVL_best.pth"
   kwargs:
     input_size_a: 74
     embd_size_a: 96
@@ -51,21 +52,20 @@ model:
 cmam:
   name: "BasicCMAM"
   input_encoder_info:
-    V_feat:
+    A_feat:
       name: "LSTMEncoder"
-      input_size: 35
+      input_size: 74
       hidden_size: 96
       embd_method: "maxpool"
-  target_modality: "A_feat"
-  kwargs:
-    assoc_net_input_size: 96
-    assoc_net_hidden_size: 256
-    assoc_net_output_size: 96
-    assoc_dropout: 0.4
-    assoc_use_bn: True 
-    grad_clip: 0.5
+  target_modality: "L_feat"
+  assoc_net_input_size: 96
+  assoc_net_hidden_size: 256
+  assoc_net_output_size: 96
+  assoc_dropout: 0.4
+  assoc_use_bn: True 
+  grad_clip: 0.5
 
-cmam_training:
+training:
   epochs: 25
   num_modalities: 3
   batch_size: 256
@@ -74,14 +74,14 @@ cmam_training:
     weight_decay: 0.0001
     lr: 0.001
     betas: [0.9, 0.999]
-  rec_criterion: "cmam"
-  rec_criterion_kwargs:
+  criterion: "cmam"
+  criterion_kwargs:
     cosine_weight: 1.0
     mse_weight: 1.0
     mae_weight: 1.0
-  cls_criterion: "cross_entropy"
-  cls_weight: 0.05
-  target_missing_type: "zvz"
+    cls_weight: 0.05
+    rec_weight: 1.0
+  target_missing_type: "azz"
   scheduler: "lambda"
   scheduler_args:
     lr_lambda: "lambda epoch: 1.0 - max(0, epoch + epoch_count - niter) / float(niter_decay + 1)"
@@ -93,8 +93,8 @@ cmam_training:
 logging:
   save_metric: "loss"
   log_path: "experiments/mosei/logs/{experiment_name}/{run_id}/"
-  model_output_path: "experiments/mosei/models/{experiment_name}/cmam_V_to_A_{save_metric}_{run_id}.pth" 
-  metrics_paths: "experiments/mosei/metrics/{experiment_name}/{run_id}/cmam_V_to_A"
+  model_output_path: "experiments/mosei/models/{experiment_name}/cmam_A_to_T_{save_metric}_{run_id}.pth" 
+  metrics_paths: "experiments/mosei/metrics/{experiment_name}/{run_id}/cmam_A_to_T"
 
 metrics:
   prediction_metrics:
@@ -159,13 +159,4 @@ metrics:
       function: sklearn.metrics.confusion_matrix
       kwargs:
         labels: [0, 1, 2]
-  rec_metrics:
-    MAE:
-      function: "sklearn.metrics.mean_absolute_error"
-    MSE:
-      function: "sklearn.metrics.mean_squared_error"
-    CosineSimilarity:
-      function: "metrics.similarity.cosine_similarity"
-
-    
 

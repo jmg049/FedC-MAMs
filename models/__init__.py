@@ -1,6 +1,67 @@
+from typing import Dict, Protocol, Any, TypeVar, Type
+import torch
 from torch.nn import init
-from torch.nn import Conv2d, Linear, BatchNorm2d
+from torch.optim import Optimizer
+from torch.nn import Conv2d, Linear, BatchNorm2d, Module
 from models.networks import LSTMEncoder, TextCNN
+from utils.metric_recorder import MetricRecorder
+from modalities import Modality
+
+T = TypeVar("T")
+
+
+def check_protocol_compliance(instance: T, protocol: Type[T]) -> None:
+    """
+    Check if the instance complies with the given protocol.
+    """
+    pass
+
+
+class MultimodalModelProtocol(Protocol):
+    def set_metric_recorder(self, metric_recorder: MetricRecorder) -> None: ...
+
+    def get_encoder(self, modality: Modality | str) -> Module: ...
+
+    def train_step(
+        self,
+        batch: Dict[str, Any],
+        optimizer: Optimizer,
+        criterion: Module,
+        device: torch.device,
+    ) -> Dict[str, Any]: ...
+
+    def evaluate(
+        self, batch: Dict[str, Any], criterion: Module, device: torch.device
+    ) -> Dict[str, Any]: ...
+
+
+class CMAMProtocol(Protocol):
+    def set_predictions_metric_recorder(
+        self, metric_recorder: MetricRecorder
+    ) -> None: ...
+
+    def set_rec_metric_recorder(self, metric_recorder: MetricRecorder) -> None: ...
+
+    def reset_metric_recorders(self) -> None: ...
+
+    def train_step(
+        self,
+        batch: Dict[str, Any],
+        labels: torch.Tensor,
+        criterion: Module,
+        device: torch.device,
+        optimizer: Optimizer,
+        trained_model: Module,
+    ) -> Dict[str, Any]: ...
+
+    def evaluate(
+        self,
+        batch: Dict[str, Any],
+        labels: torch.Tensor,
+        criterion: Module,
+        device: torch.device,
+        trained_model: Module,
+    ) -> Dict[str, Any]: ...
 
 
 def kaiming_init(module):

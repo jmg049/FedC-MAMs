@@ -6,8 +6,6 @@ from models.networks.textcnn import TextCNN
 from models.networks.classifier import FcClassifier
 from torch.nn import Module
 
-from modalities import Modality
-
 
 class UttFusionModel(Module):
     def __init__(
