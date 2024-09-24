@@ -8,14 +8,9 @@ import json
 from collections import OrderedDict
 import torch.nn.functional as F
 from models._base_model import BaseModel
-from models.networks.fc import FcEncoder
-from models.networks.lstmvar import LSTMEncoder
-from models.networks.textcnnvar import TextCNN
 from models.networks.transformer import Transformer
 from models.networks.classifier import FcClassifier
 from models.networks.autoencoder import ResidualAE, ResidualXE
-from models.networks.xencoder import LinearVXE
-from models.utt_fusion_model import UttFusionModel
 from .utils.config import OptConfig
 
 

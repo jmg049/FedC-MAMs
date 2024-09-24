@@ -157,13 +157,4 @@ metrics:
       function: sklearn.metrics.confusion_matrix
       kwargs:
         labels: [0, 1, 2]
-  rec_metrics:
-    MAE:
-      function: "sklearn.metrics.mean_absolute_error"
-    MSE:
-      function: "sklearn.metrics.mean_squared_error"
-    CosineSimilarity:
-      function: "metrics.similarity.cosine_similarity"
-
-    
 

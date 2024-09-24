@@ -14,3 +14,4 @@ from .config import (
 
 from .standard_config import StandardConfig, TrainingConfig
 from .cmam_config import CMAMConfig, CMAMTrainingConfig, CMAMModelConfig
+from .federated_config import FederatedConfig

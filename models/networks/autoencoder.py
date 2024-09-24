@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
-import random
 import copy
-import torch.nn.functional as F
 
 class ResidualAE(nn.Module):
     ''' Residual autoencoder using fc layers

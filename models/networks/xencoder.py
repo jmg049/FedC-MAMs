@@ -1,7 +1,6 @@
 #https://debuggercafe.com/getting-started-with-variational-autoencoders-using-pytorch/
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class LinearVXE(nn.Module):

@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from torch.nn import init
-import numpy as np
 import functools
 from torch.optim import lr_scheduler
 

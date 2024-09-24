@@ -283,9 +283,9 @@ if __name__ == "__main__":
                 os.path.join(config.logging.metrics_path, "validation_plots"),
             ]
         )
-        to_store = clean_checkpoints(
-            os.path.dirname(config.logging.model_output_path), best_eval_epoch
-        )
+    to_store = clean_checkpoints(
+        os.path.dirname(config.logging.model_output_path), best_eval_epoch
+    )
     assert to_store is not None, "No model to store"
 
     console.print("Training complete")

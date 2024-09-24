@@ -3,9 +3,11 @@ import torch
 from torch.nn import init
 from torch.optim import Optimizer
 from torch.nn import Conv2d, Linear, BatchNorm2d, Module
+from federated import FederatedResult
 from models.networks import LSTMEncoder, TextCNN
 from utils.metric_recorder import MetricRecorder
 from modalities import Modality
+from torch.utils.data import DataLoader
 
 T = TypeVar("T")
 
@@ -15,6 +17,28 @@ def check_protocol_compliance(instance: T, protocol: Type[T]) -> None:
     Check if the instance complies with the given protocol.
     """
     pass
+
+
+class FederatedMultimodalClientProtocol(Protocol):
+    def set_metric_recorder(self, metric_recorder: MetricRecorder) -> None: ...
+
+    def train_round(
+        self,
+    ) -> None: ...
+
+    def _train_step(
+        self,
+        batch: Dict[str, Any],
+    ) -> Dict[str, Any]: ...
+
+    def _evaluate_step(
+        self,
+        batch: Dict[str, Any],
+    ) -> FederatedResult: ...
+
+    def evaluate_round(
+        self,
+    ) -> FederatedResult: ...
 
 
 class MultimodalModelProtocol(Protocol):

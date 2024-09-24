@@ -1,7 +1,6 @@
 import argparse
 import json
 import os
-import shlex
 import subprocess
 import time
 from collections import defaultdict
@@ -268,7 +267,12 @@ if __name__ == "__main__":
             tqdm.write(str(validation_cm))
             del epoch_rec_metric_recorder.results["ConfusionMatrix"]
 
-        validation_rec_metrics = epoch_rec_metric_recorder.get_average_metrics()
+        validation_rec_metrics = epoch_rec_metric_recorder.get_average_metrics(
+            save_to=os.path.join(
+                f"{config.logging.metrics_path.rsplit('.', 1)[0]}_rec",
+                "cmam_validation",
+            ),
+        )
         console.rule("Validation Metrics")
 
         print_all_metrics_tables(
