@@ -7,6 +7,7 @@ from scipy.stats import entropy
 from torch.utils.data import DataLoader, Dataset
 
 from config import DataConfig
+from data.avmnist import AVMNISTDataSet
 from data.cmu_mosei_miss_dataset import cmumoseimissdataset
 
 
@@ -356,6 +357,8 @@ def resolve_dataset_name(dataset_name: str) -> Dataset:
         match dataset_name.lower():
             case "mosi" | "mosei":
                 return cmumoseimissdataset
+            case "avmnist":
+                return AVMNISTDataSet
             case _:
                 raise ValueError(f"Invalid dataset: {dataset_name}")
     except Exception as e:

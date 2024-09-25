@@ -1,8 +1,0 @@
-
-{
-    "data_root": "/pathtoIEMOCAP_full_release/",
-    "target_root": "/pathtoIEMOCAP/IEMOCAP_features_2021/target",
-    "total_cv": 10,
-    "feature_root": "/pathtoIEMOCAP/IEMOCAP_features_2021"
-
-}

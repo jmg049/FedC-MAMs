@@ -9,6 +9,8 @@ import yaml
 import time
 import logging
 from cmam_loss import CMAMLoss
+from models import ConvBlockArgs
+from models.avmnist import AVMNIST, MNISTAudio, MNISTImage
 from models.cmams import BasicCMAM
 from models.utt_fusion_model import UttFusionModel
 from modalities import Modality
@@ -21,7 +23,25 @@ def modality_constructor(loader, node):
     return Modality.from_str(value)
 
 
+def mnist_audio_constructor(loader, node):
+    value = loader.construct_mapping(node)
+    return MNISTAudio(**value)
+
+
+def mnist_image_constructor(loader, node):
+    value = loader.construct_mapping(node)
+    return MNISTImage(**value)
+
+
+def conv_block_constructor(loader, node):
+    value = loader.construct_mapping(node)
+    return ConvBlockArgs(**value)
+
+
 yaml.SafeLoader.add_constructor("!Modality", modality_constructor)
+yaml.SafeLoader.add_constructor("!ConvBlock", conv_block_constructor)
+yaml.SafeLoader.add_constructor("!MNISTAudio", mnist_audio_constructor)
+yaml.SafeLoader.add_constructor("!MNISTImage", mnist_image_constructor)
 
 
 @dataclass(kw_only=True)
@@ -294,6 +314,8 @@ def resolve_model_name(model_name: str):
     match model_name.lower():
         case "uttfusionmodel":
             return UttFusionModel
+        case "avmnist":
+            return AVMNIST
         case "basiccmam":
             return BasicCMAM
         case _:

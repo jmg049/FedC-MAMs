@@ -82,7 +82,7 @@ class MetricRecorder:
 
     def get(self, metric_name: str, default=None) -> Union[List[Any] | Any]:
         m = self.results.get(metric_name, default)
-        if len(m) == 1:
+        if m is not None and len(m) == 1:
             return m[0]
         return m
 

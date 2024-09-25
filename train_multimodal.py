@@ -237,11 +237,6 @@ if __name__ == "__main__":
                 max_width=15,
             )
 
-        # record epoch with best result
-        uar = validation_metrics["UAR_AVL"]
-        acc = validation_metrics["Accuracy_AVL"]
-        f1 = validation_metrics["F1_Weighted_AVL"]
-
         if config.logging.save_metric == "loss":
             if validation_metrics["loss"] < best_eval_loss:
                 console.print(f"New best model found at epoch {epoch}")
@@ -254,6 +249,35 @@ if __name__ == "__main__":
                 console.print(f"New best model found at epoch {epoch}")
                 best_eval_epoch = epoch
                 best_metrics = validation_metrics
+
+        # EARLY STOPPING - Based on the target metric
+        if config.training.early_stopping:
+            patience = (
+                config.training.early_stopping_patience
+            )  # Number of epochs to wait for improvement
+            min_delta = config.training.early_stopping_min_delta
+            # Determine whether we are minimizing or maximizing the metric
+            if config.logging.save_metric == "loss":
+                improvement = (
+                    best_metrics[config.logging.save_metric]
+                    - validation_metrics[config.logging.save_metric]
+                )  # Improvement means decrease
+            else:
+                improvement = (
+                    validation_metrics[config.logging.save_metric]
+                    - best_metrics[config.logging.save_metric]
+                )  # Improvement means increase
+
+            if epoch > patience:
+                # Check if there is significant improvement by at least `min_delta`
+                if improvement < min_delta:
+                    console.print(
+                        f"No improvement for {patience} epochs, stopping training..."
+                    )
+                    logger.info(
+                        f"Early stopping at epoch {epoch} due to no improvement in {config.logging.save_metric}"
+                    )
+                    break
 
         model_state_dict = model.state_dict()
         os.makedirs(os.path.dirname(config.logging.model_output_path), exist_ok=True)

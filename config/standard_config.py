@@ -32,6 +32,9 @@ class TrainingConfig(BaseConfig):
     num_modalities: int = 3
     missing_rates: Optional[List[float]] = None
     do_validation_visualization: bool = False
+    early_stopping: bool = False
+    early_stopping_patience: int = 10
+    early_stopping_min_delta: float = 0.001
 
     def __post_init__(self):
         assert self.num_modalities >= 1, "Number of modalities must be at least 1"
