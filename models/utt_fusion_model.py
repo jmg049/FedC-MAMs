@@ -244,3 +244,7 @@ class UttFusionModel(Module):
             )
 
         return {"loss": loss.item(), **metrics}
+
+    def flatten_parameters(self):
+        self.netA.rnn.flatten_parameters()
+        self.netV.rnn.flatten_parameters()

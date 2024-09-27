@@ -2,7 +2,7 @@
 
 set -e
 
-dataset="mosei"
+dataset="avmnist"
 # Default values
 runs=3
 cmam_configs_root="configs/${dataset}/cmams"
@@ -25,6 +25,5 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-bash scripts/mosei/_train_mosei_audio_text_cmam.sh --runs "$runs" --cmam_configs_root "$cmam_configs_root"
-bash scripts/mosei/_train_mosei_audio_video_cmam.sh --runs "$runs" --cmam_configs_root "$cmam_configs_root"
-bash scripts/mosei/_train_mosei_video_text_cmam.sh --runs "$runs" --cmam_configs_root "$cmam_configs_root"
+bash scripts/avmnist/cmams/_avmnist_train_a_to_i.sh --runs $runs --cmam_configs_root $cmam_configs_root
+bash scripts/avmnist/cmams/_avmnist_train_i_to_a.sh --runs $runs --cmam_configs_root $cmam_configs_root

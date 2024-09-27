@@ -55,13 +55,12 @@ cmam:
       input_size: 768
       embd_size: 96
   target_modality: "A_feat"
-  kwargs:
-    assoc_net_input_size: 96
-    assoc_net_hidden_size: 256
-    assoc_net_output_size: 96
-    assoc_dropout: 0.4
-    assoc_use_bn: True 
-    grad_clip: 0.5
+  assoc_net_input_size: 96
+  assoc_net_hidden_size: 256
+  assoc_net_output_size: 96
+  assoc_dropout: 0.4
+  assoc_use_bn: True 
+  grad_clip: 0.5
 
 training:
   epochs: 25

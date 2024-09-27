@@ -23,8 +23,8 @@ class MIEstimator(nn.Module):
 class CMAMLoss(nn.Module):
     def __init__(
         self,
-        x_dims: int,
-        z_dim: int,
+        x_dims: int | list[int] = 0,
+        z_dim: int = 0,
         cosine_weight: float = 1.0,
         mae_weight: float = 1.0,
         mse_weight: float = 1.0,
@@ -129,7 +129,8 @@ class CMAMLoss(nn.Module):
         Returns:
             torch.Tensor: Gaussian kernel matrix.
         """
-        dist = torch.cdist(x, y, p=2)
+        dist = torch.cdist(x, y, p=2) ** 2
+
         return torch.exp(-dist / (2 * sigma**2))
 
     def mmd_loss(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:

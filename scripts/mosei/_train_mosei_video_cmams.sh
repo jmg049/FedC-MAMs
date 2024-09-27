@@ -26,8 +26,8 @@ done
 
 # Run the training script
 for run_idx in $(seq 1 $runs); do
-    python3 train_cmams.py --config "${cmam_configs_root}/mosei_cmams_v_to_a_${run_idx}.yaml" --run_id "$run_idx"
-    python3 train_cmams.py --config "${cmam_configs_root}/mosei_cmams_v_to_l_${run_idx}.yaml" --run_id "$run_idx"
+    python3 train_cmams.py --config "${cmam_configs_root}/mosei_cmams_v_to_a.yaml" --run_id "$run_idx"
+    python3 train_cmams.py --config "${cmam_configs_root}/mosei_cmams_v_to_l.yaml" --run_id "$run_idx"
 done
 
 python3 metric_output/process_cmam_test_metrics.py --metrics_path "experiments/mosei/metrics/MOSEI (CMAMs V-A): Baseline Training" --inner_dir_name "cmam_V_to_A" --output_path "experiments/mosei/metrics/MOSEI (CMAMs V-A): Baseline Training/v_to_a.tex"

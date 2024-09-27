@@ -1,68 +1,89 @@
 experiment:
-  name: "MOSEI (CMAMs VT-A): Baseline Training"
+  name: "AVMNIST (CMAMs I-A): Baseline Training"
   debug: False
 
 data:
   train:
-    dataset: "mosei"
-    data_fp: "DATA/MOSEI/aligned_50.pkl"
+    dataset: "avmnist"
+    data_fp: "DATA/avmnist/train_subset.csv"
     target_modality: "multimodal"
     split: "train"
     shuffle: True
     drop_last: True
     pin_memory: True
 
-
   validation:
-    dataset: "mosei"
-    data_fp: "DATA/MOSEI/aligned_50.pkl"
+    dataset: "avmnist"
+    data_fp: "DATA/avmnist/validation_subset.csv"
     target_modality: "multimodal"
     split: "valid"
     drop_last: True
     pin_memory: True
 
-
   test:
-    dataset: "mosei"
-    data_fp: "DATA/MOSEI/aligned_50.pkl"
+    dataset: "avmnist"
+    data_fp: "DATA/avmnist/test_subset.csv"
     target_modality: "multimodal"
     split: "test"
     drop_last: True
     pin_memory: True
 
+
 model:
-  name: "UttFusionModel"
-  pretrained_path: "experiments/mosei/models/MOSEI (Classification): Baseline Training/{run_id}/mosei_model_UAR_AVL_best.pth"
+  name: "AVMNIST"
+  pretrained_path: "experiments/avmnist/models/AVMNIST (Classification): Baseline Training/{run_id}/avmnist_model_loss_best.pth"
   kwargs:
-    input_size_a: 74
-    embd_size_a: 96
-    embd_method_a: "maxpool"
-    input_size_v: 35
-    embd_size_v: 96
-    embd_method_v: "maxpool"
-    input_size_l: 768
-    embd_size_l: 96
-    classification_layers: [96, 96]
-    output_dim: 3
+    audio_encoder: !MNISTAudio
+      conv_block_one_args: !ConvBlock
+        conv_one_in: 1
+        conv_one_out: 32
+      conv_block_two_args: !ConvBlock
+        conv_one_in: 32
+        conv_one_out: 32
+      conv_batch_norm: True
+      hidden_dim: 64
+    image_encoder: !MNISTImage
+      conv_block_one_one_args: !ConvBlock
+        conv_one_in: 1
+        conv_one_out: 32
+      conv_block_one_two_args: !ConvBlock
+        conv_one_in: 32
+        conv_one_out: 64
+      conv_block_two_one_args: !ConvBlock
+        conv_one_in: 64
+        conv_one_out: 64
+      conv_block_two_two_args: !ConvBlock
+        conv_one_in: 64
+        conv_one_out: 64
+      hidden_dim: 128
+      conv_batch_norm: True
+    hidden_dim: 128
     dropout: 0.5
-    use_bn: False
+    fusion_fn: "concat"
+
 
 cmam:
   name: "BasicCMAM"
   input_encoder_info:
-    V_feat:
-      name: "LSTMEncoder"
-      input_size: 35
-      hidden_size: 96
-      embd_method: "maxpool"
-    L_feat:
-      name: "TextCNN"
-      input_size: 768
-      embd_size: 96
-  target_modality: "A_feat"
-  assoc_net_input_size: 192
+    Image: !MNISTImage
+      conv_block_one_one_args: !ConvBlock
+        conv_one_in: 1
+        conv_one_out: 32
+      conv_block_one_two_args: !ConvBlock
+        conv_one_in: 32
+        conv_one_out: 64
+      conv_block_two_one_args: !ConvBlock
+        conv_one_in: 64
+        conv_one_out: 64
+      conv_block_two_two_args: !ConvBlock
+        conv_one_in: 64
+        conv_one_out: 64
+      hidden_dim: 128
+      conv_batch_norm: True
+  target_modality: "Audio"
+  assoc_net_input_size: 128
   assoc_net_hidden_size: 256
-  assoc_net_output_size: 96
+  assoc_net_output_size: 64
   assoc_dropout: 0.4
   assoc_use_bn: True 
   grad_clip: 0.5
@@ -76,14 +97,14 @@ training:
     weight_decay: 0.0001
     lr: 0.001
     betas: [0.9, 0.999]
-  rec_criterion: "cmam"
-  rec_criterion_kwargs:
+  criterion: "cmam"
+  criterion_kwargs:
     cosine_weight: 1.0
     mse_weight: 1.0
     mae_weight: 1.0
-  cls_criterion: "cross_entropy"
-  cls_weight: 0.05
-  target_missing_type: "zvl"
+    cls_weight: 0.05
+    rec_weight: 1.0
+  target_missing_type: "zi"
   scheduler: "lambda"
   scheduler_args:
     lr_lambda: "lambda epoch: 1.0 - max(0, epoch + epoch_count - niter) / float(niter_decay + 1)"
@@ -91,12 +112,15 @@ training:
     niter: 10
     niter_decay: 10
   do_tsne: True
+  early_stopping: True
+  early_stopping_patience: 5
+  early_stopping_min_delta: 0.001
   
 logging:
   save_metric: "loss"
-  log_path: "experiments/mosei/logs/{experiment_name}/{run_id}/"
-  model_output_path: "experiments/mosei/models/{experiment_name}/cmam_VT_A_{save_metric}_{run_id}.pth" 
-  metrics_paths: "experiments/mosei/metrics/{experiment_name}/{run_id}/cmam_VT_to_A"
+  log_path: "experiments/avmnist/logs/{experiment_name}/{run_id}/"
+  model_output_path: "experiments/avmnist/models/{experiment_name}/cmam_I_To_A_{save_metric}_{run_id}.pth" 
+  metrics_paths: "experiments/avmnist/metrics/{experiment_name}/{run_id}/cmam_I_to_A"
 
 metrics:
   prediction_metrics:
@@ -114,11 +138,6 @@ metrics:
       function: "sklearn.metrics.f1_score"
       kwargs:
         average: "weighted"
-    UAR:
-      function: "sklearn.metrics.recall_score"
-      kwargs:
-        average: "macro"
-        zero_division: 0
     Precision_Macro:
       function: "sklearn.metrics.precision_score"
       kwargs:
@@ -149,16 +168,7 @@ metrics:
       kwargs:
         average: "micro"
         zero_division: 0
-    NonZeroAcc:
-      function: metrics.mosi.binary_accuracy_non_zero
-    NonZeroF1:
-      function: metrics.mosi.binary_f1_score_non_zero
-    HasZeroAcc:
-      function: metrics.mosi.binary_accuracy
-    HasZeroF1:
-      function: metrics.mosi.binary_f1_score
     ConfusionMatrix:
-      function: sklearn.metrics.confusion_matrix
+      function: "sklearn.metrics.confusion_matrix"
       kwargs:
-        labels: [0, 1, 2]
-
+        labels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]

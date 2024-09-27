@@ -61,6 +61,8 @@ class MultimodalModelProtocol(Protocol):
         self, batch: Dict[str, Any], criterion: Module, device: torch.device
     ) -> Dict[str, Any]: ...
 
+    def flatten_parameters(self) -> None: ...
+
 
 class CMAMProtocol(Protocol):
     def set_predictions_metric_recorder(

@@ -38,10 +38,22 @@ def conv_block_constructor(loader, node):
     return ConvBlockArgs(**value)
 
 
+def model_config_constructor(loader, node):
+    value = loader.construct_mapping(node)
+    return ModelConfig.from_dict(value)
+
+
+def experiment_config_constructor(loader, node):
+    value = loader.construct_mapping(node)
+    return ExperimentConfig(**value)
+
+
 yaml.SafeLoader.add_constructor("!Modality", modality_constructor)
 yaml.SafeLoader.add_constructor("!ConvBlock", conv_block_constructor)
 yaml.SafeLoader.add_constructor("!MNISTAudio", mnist_audio_constructor)
 yaml.SafeLoader.add_constructor("!MNISTImage", mnist_image_constructor)
+yaml.SafeLoader.add_constructor("!ModelConfig", model_config_constructor)
+yaml.SafeLoader.add_constructor("!ExperimentConfig", experiment_config_constructor)
 
 
 @dataclass(kw_only=True)
@@ -56,6 +68,9 @@ class BaseConfig:
     def from_dict(cls, data: Dict[str, Any]):
         """Create a config instance from a dictionary."""
         return cls(**{k: v for k, v in data.items() if k in cls.__annotations__})
+
+    def __getitem__(self, key):
+        return getattr(self, key)
 
 
 @dataclass
@@ -111,6 +126,12 @@ class DatasetConfig(BaseConfig):
         for f in self.__dataclass_fields__:
             yield f, getattr(self, f)
 
+    def items(self):
+        yield from self.__iter__()
+
+    def get(self, key, default=None):
+        return getattr(self, key, default)
+
 
 @dataclass
 class DataConfig(BaseConfig):
@@ -135,10 +156,16 @@ class ModelConfig(BaseConfig):
     kwargs: Dict[str, Any] = field(default_factory=dict)
 
     def from_dict(data: dict):
+
+        name = data["name"]
+        pretrained_path = data.get("pretrained_path", None)
+        kwargs = {
+            k: v for k, v in data.items() if k != "name" and k != "pretrained_path"
+        }
         return ModelConfig(
-            name=data["name"],
-            pretrained_path=data.get("pretrained_path", None),
-            kwargs=data.get("kwargs", None),
+            name=name,
+            pretrained_path=pretrained_path,
+            kwargs=kwargs,
         )
 
 
@@ -150,7 +177,7 @@ class LoggingConfig(BaseConfig):
     save_condition: Optional[str] = "AVL"
     log_path: str = "logs/log.txt"
     model_output_path: str = "models/model.pt"
-    metrics_path: str = "metrics/metrics.josn"
+    metrics_path: str = "metrics/metrics.json"
     run_id: Optional[str] = None
     experiment_name: Optional[str] = None
 
@@ -218,7 +245,7 @@ class Config(BaseConfig):
     """Main configuration class."""
 
     experiment: ExperimentConfig
-    data: DataConfig
+    data: DataConfig = None
     model: Optional[ModelConfig] = None
     logging: Optional[LoggingConfig] = None
     metrics: Optional[MetricsConfig] = None
@@ -281,9 +308,9 @@ def resolve_optimizer(optimizer_name: str):
         "adam": torch.optim.Adam,
         "sgd": torch.optim.SGD,
     }
-    if optimizer_name not in optimizers:
+    if optimizer_name.lower() not in optimizers:
         raise ValueError(f"Invalid optimizer: {optimizer_name}")
-    return optimizers[optimizer_name]
+    return optimizers[optimizer_name.lower()]
 
 
 def resolve_criterion(criterion_name: str):

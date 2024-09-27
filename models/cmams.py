@@ -2,6 +2,7 @@ from typing import Any, Dict, Union
 import numpy as np
 import torch
 from torch.nn import (
+    Parameter,
     Module,
     Linear,
     ReLU,
@@ -10,6 +11,8 @@ from torch.nn import (
     BatchNorm1d,
     Identity,
     ModuleDict,
+    MultiheadAttention,
+    ModuleList,
 )
 
 from cmam_loss import CMAMLoss
@@ -34,6 +37,9 @@ class BasicCMAM(Module):
         super(BasicCMAM, self).__init__()
         self.encoders = ModuleDict()
         for modality, encoder_params in input_encoder_info.items():
+            if isinstance(encoder_params, Module):
+                self.encoders[str(modality)] = encoder_params
+                continue
             encoder_cls = resolve_encoder(encoder_params["name"])
             encoder_params.pop("name")
             self.encoders[str(modality)] = encoder_cls(**encoder_params)
@@ -289,3 +295,62 @@ class BasicCMAM(Module):
                 **rec_metrics,
                 **pred_metrics,
             }
+
+
+class DualCMAM(Module):
+    """
+    Given a single modality this C-MAM will reconstruct the embeddings of two other modalities.
+    """
+
+    def __init__(
+        self,
+        input_encoder: Module,
+        shared_encoder_output_size: int,
+        decoder_hidden_size: int,
+        target_modality_one_embd_size: int,
+        target_modality_two_embd_size: int,
+        attention_heads: int = 2,
+        dropout: float = 0.1,
+        grad_clip: float = 0.0,
+    ):
+        super(DualCMAM, self).__init__()
+
+        self.input_encoder = input_encoder
+        self.attention = MultiheadAttention(
+            embed_dim=shared_encoder_output_size,
+            num_heads=attention_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+
+        self.decoders = ModuleList(
+            [
+                Sequential(
+                    Linear(shared_encoder_output_size, decoder_hidden_size),
+                    ReLU(),
+                    Dropout(dropout),
+                    Linear(decoder_hidden_size, target_modality_one_embd_size),
+                ),
+                Sequential(
+                    Linear(shared_encoder_output_size, decoder_hidden_size),
+                    ReLU(),
+                    Dropout(dropout),
+                    Linear(decoder_hidden_size, target_modality_two_embd_size),
+                ),
+            ]
+        )
+
+        self.grad_clip = grad_clip
+        self.modality_weights = Parameter(torch.ones(2))
+
+    def forwad(self, input_modality: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        input_embd = self.input_encoder(
+            input_modality
+        )  ## expects the encoder to produce a single, flat tensor with shape (batch_size, embd_size)
+
+        attention_encoding, _ = self.attention(input_embd, input_embd, input_embd)
+
+        reconstructed_embd_one = self.decoders[0](attention_encoding)
+        reconstructed_embd_two = self.decoders[1](attention_encoding)
+
+        return reconstructed_embd_one, reconstructed_embd_two

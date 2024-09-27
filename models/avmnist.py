@@ -43,13 +43,16 @@ class MNISTAudio(Module):
 
         fc_in = Linear(conv_block_out_dim, hidden_dim)
         max_pool = MaxPool2d(kernel_size=max_pool_kernel_size)
-
+        self.hidden_dim = hidden_dim
         self.net = Sequential(
             conv_block,
             max_pool,
             Flatten(),
             fc_in,
         )
+
+    def get_embedding_size(self):
+        return self.hidden_dim
 
     def forward(self, audio: Tensor) -> Tensor:
         audio = audio.unsqueeze(1)
@@ -86,7 +89,7 @@ class MNISTImage(Module):
         )
         max_pool = MaxPool2d(kernel_size=max_pool_kernel_size)
         conv_block_out_dim = 3136  ## adjust this value based on the output of the conv block unfortunately, it is not trivial to calculate this value before hand
-
+        self.hidden_dim = hidden_dim
         self.net = Sequential(
             conv_block_one,
             max_pool,
@@ -95,6 +98,9 @@ class MNISTImage(Module):
             Flatten(),
             Linear(conv_block_out_dim, hidden_dim),
         )
+
+    def get_embedding_size(self):
+        return self.hidden_dim
 
     def forward(self, image: Tensor) -> Tensor:
         # image = image.unsqueeze(1)
@@ -148,7 +154,7 @@ class AVMNIST(Module):
 
     def get_encoder(self, modality: str | Modality) -> Module:
         if isinstance(modality, str):
-            modality = Modality(modality)
+            modality = Modality.from_str(modality)
 
             match modality:
                 case Modality.AUDIO:
@@ -164,6 +170,7 @@ class AVMNIST(Module):
         I: Tensor = None,
         is_embd_A: bool = False,
         is_embd_I: bool = False,
+        **kwargs,
     ) -> Tensor:
 
         assert not all((A is None, I is None)), "At least one of A, I must be provided"
@@ -268,8 +275,11 @@ class AVMNIST(Module):
             metrics = self.metric_recorder.calculate_metrics(
                 predictions=predictions, targets=labels
             )
+
             miss_type = np.array(miss_type)
+            print(miss_type)
             for m_type in set(miss_type):
+                print(m_type)
                 mask = miss_type == m_type
                 mask_preds = predictions[mask]
                 mask_labels = labels[mask]

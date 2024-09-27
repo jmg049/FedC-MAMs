@@ -29,7 +29,7 @@ add_modality("VIDEO")
 console = Console()
 
 # Set to False if your terminal does not support rendering an image
-RENDER_LOSS_FN = True
+RENDER_LOSS_FN = False
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -137,32 +137,35 @@ if __name__ == "__main__":
     cmam.set_rec_metric_recorder(MetricRecorder(config.rec_metrics))
 
     # kaiming_init(cmam)
+    criterion_kwargs = config.training.criterion_kwargs
 
+    ## calculate x-dim and z-dim for MI loss
+    if "mi_weight" in criterion_kwargs and criterion_kwargs["mi_weight"] > 0:
+        x_dims = [
+            config.cmam.input_encoder_info[k].get_embedding_size()
+            for k in config.cmam.input_encoder_info.keys()
+        ]
+        z_dim = config.cmam.assoc_net_output_size
+
+        criterion_kwargs["x_dims"] = x_dims
+        criterion_kwargs["z_dim"] = z_dim
+
+    cmam_criterion = config.get_criterion(config.training.criterion, criterion_kwargs)
     cmam.to(device)
     console.print("CMAM model created")
     logger.info(f"CMAM model created\n{cmam}")
     console.print(f"{cmam}")
+    params = (
+        list(cmam.parameters(), cmam_criterion.mi_estimator.parameters())
+        if config.training.criterion_kwargs.get("mi_weight", 0) > 0
+        else list(cmam.parameters())
+    )
     optimizer = config.get_optimizer(cmam)
 
     if config.training.scheduler is not None:
         scheduler = config.get_scheduler(optimizer=optimizer)
         console.print("Scheduler created")
         logger.info(f"Scheduler created\n{scheduler}")
-
-    criterion_kwargs = config.training.criterion_kwargs
-
-    ## calculate x-dim and z-dim for MI loss
-
-    x_dims = [
-        config.cmam.input_encoder_info[k]["input_size"]
-        for k in config.cmam.input_encoder_info.keys()
-    ]
-    z_dim = config.cmam.assoc_net_output_size
-
-    criterion_kwargs["x_dims"] = x_dims
-    criterion_kwargs["z_dim"] = z_dim
-
-    cmam_criterion = config.get_criterion(config.training.criterion, criterion_kwargs)
 
     console.print("Optimizer and criterion created")
     logger.info(f"Optimizer and criterion created\n{optimizer}\n{cmam_cfg}")
@@ -215,8 +218,8 @@ if __name__ == "__main__":
 
         train_cm = epoch_rec_metric_recorder.get("ConfusionMatrix", default=None)
         if train_cm is not None:
-            train_cm = np.sum(train_cm, axis=0)
-            tqdm.write(str(train_cm))
+            # train_cm = np.sum(train_cm, axis=0)
+            # tqdm.write(str(train_cm))
             del epoch_rec_metric_recorder.results["ConfusionMatrix"]
 
         # train_metrics = epoch_metric_recorder.get_average_metrics()
@@ -267,7 +270,7 @@ if __name__ == "__main__":
             tqdm.write(str(validation_cm))
             del epoch_rec_metric_recorder.results["ConfusionMatrix"]
 
-        validation_rec_metrics = epoch_rec_metric_recorder.get_average_metrics(
+        validation_metrics = epoch_rec_metric_recorder.get_average_metrics(
             save_to=os.path.join(
                 f"{config.logging.metrics_path.rsplit('.', 1)[0]}_rec",
                 "cmam_validation",
@@ -276,7 +279,7 @@ if __name__ == "__main__":
         console.rule("Validation Metrics")
 
         print_all_metrics_tables(
-            metrics=validation_rec_metrics,
+            metrics=validation_metrics,
             console=console,
             max_cols_per_row=15,
             max_width=15,
@@ -322,21 +325,6 @@ if __name__ == "__main__":
                 max_width=15,
             )
 
-        # record epoch with best result as per the target metric
-
-        if config.logging.save_metric == "loss":
-            if validation_rec_metrics["loss"] < best_eval_loss:
-                console.print(f"New best model found at epoch {epoch}")
-                best_eval_epoch = epoch
-                best_eval_loss = validation_rec_metrics["loss"]
-                best_metrics = validation_rec_metrics
-        else:
-            target_metric = validation_rec_metrics[config.logging.save_metric]
-            if target_metric > best_metrics[config.logging.save_metric]:
-                console.print(f"New best model found at epoch {epoch}")
-                best_eval_epoch = epoch
-                best_metrics = validation_rec_metrics
-
         model_state_dict = cmam.state_dict()
         os.makedirs(os.path.dirname(config.logging.model_output_path), exist_ok=True)
         console.print(f"Model output path: {config.logging.model_output_path}")
@@ -347,6 +335,54 @@ if __name__ == "__main__":
         console.print(
             f"Epoch {epoch} saved at {config.logging.model_output_path.replace('.pth', f'_{epoch}.pth')}"
         )
+
+        # EARLY STOPPING - Based on the target metric
+        if config.training.early_stopping:
+            patience = (
+                config.training.early_stopping_patience
+            )  # Number of epochs to wait for improvement
+            min_delta = config.training.early_stopping_min_delta
+            # Determine whether we are minimizing or maximizing the metric
+            if config.logging.save_metric == "loss":
+                improvement = (
+                    best_metrics[config.logging.save_metric]
+                    - validation_metrics[config.logging.save_metric]
+                )
+                console.print(
+                    f"Improvement: {improvement}, Best: {best_metrics[config.logging.save_metric]}, Current: {validation_metrics[config.logging.save_metric]}"
+                )
+            else:
+                improvement = (
+                    validation_metrics[config.logging.save_metric]
+                    - best_metrics[config.logging.save_metric]
+                )  # Improvement means increase
+
+            if epoch > patience:
+                # Check if there is significant improvement by at least `min_delta`
+                if improvement < min_delta:
+                    console.print(
+                        f"No improvement for {patience} epochs, stopping training..."
+                    )
+                    logger.info(
+                        f"Early stopping at epoch {epoch} due to no improvement in {config.logging.save_metric}"
+                    )
+                    break
+
+        # record epoch with best result as per the target metric
+
+        if config.logging.save_metric == "loss":
+            if validation_metrics["loss"] < best_eval_loss:
+                console.print(f"New best model found at epoch {epoch}")
+                best_eval_epoch = epoch
+                best_eval_loss = validation_metrics["loss"]
+                best_metrics = validation_metrics
+        else:
+            target_metric = validation_metrics[config.logging.save_metric]
+            if target_metric > best_metrics[config.logging.save_metric]:
+                console.print(f"New best model found at epoch {epoch}")
+                best_eval_epoch = epoch
+                best_metrics = validation_metrics
+
     console.print("Training complete")
     console.print(
         f"Best eval epoch was {best_eval_epoch} with a {config.logging.save_metric} of {best_metrics[config.logging.save_metric]}"
@@ -426,7 +462,6 @@ if __name__ == "__main__":
         epoch_rec_metrics = epoch_rec_metric_recorder.get_average_metrics(
             save_to=os.path.join(
                 f"{config.logging.metrics_path.rsplit('.', 1)[0]}",
-                "cmam_validation",
             ),
             epoch="test",
         )
@@ -473,6 +508,8 @@ if __name__ == "__main__":
                 --gt_embeddings "{prepare_path(os.path.join(result_dir, 'target_embds_test.npy'))}" \
                 --output "{prepare_path(output_path)}" \
                 --title "{title}"  """
+            command = command.replace("\n", "")
+
             console.print(f"Running t-SNE visualization with command: {command}")
 
             # Wrap the Python command with nohup and redirect output

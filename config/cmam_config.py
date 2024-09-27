@@ -71,6 +71,9 @@ class CMAMTrainingConfig(BaseConfig):
     validation_interval: int = 1
     do_tsne: bool = False
     target_missing_type: str = "AVL"
+    early_stopping: bool = False
+    early_stopping_patience: int = 10
+    early_stopping_min_delta: float = 0.001
 
 
 @dataclass(kw_only=True)

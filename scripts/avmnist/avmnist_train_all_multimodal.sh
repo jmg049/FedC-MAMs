@@ -1,6 +1,28 @@
 #!/bin/bash
+
 set -e
+
+dataset="avmnist"
+# Default values
 runs=3
-for i in $(seq 1 $runs); do
-    python3 train_multimodal.py --config configs/avmnist/avmnist_multimodal.yaml --run_id $i
+cmam_configs_root="configs/${dataset}/cmams"
+
+# Parse command-line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+    --runs)
+        runs="$2"
+        shift 2
+        ;;
+    --configs_root)
+        configs_root="$2"
+        shift 2
+        ;;
+    *)
+        echo "Unknown argument: $1"
+        exit 1
+        ;;
+    esac
 done
+
+bash scripts/avmnist

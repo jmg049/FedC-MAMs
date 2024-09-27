@@ -115,22 +115,22 @@ class AVMNISTDataSet(Dataset):
         match self.target_modality:
             case Modality.AUDIO:
                 return {
-                    "A": A,
+                    "Audio": A,
                     "label": label,
                     "missing_index": missing_index,
                     "miss_type": miss_type,
                 }
             case Modality.IMAGE:
                 return {
-                    "I": I,
+                    "Image": I,
                     "label": label,
                     "missing_index": missing_index,
                     "miss_type": miss_type,
                 }
             case Modality.MULTIMODAL:
                 return {
-                    "A": A,
-                    "I": I,
+                    "Audio": A,
+                    "Image": I,
                     "label": label,
                     "missing_index": missing_index,
                     "miss_type": miss_type,

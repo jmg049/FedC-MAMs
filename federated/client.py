@@ -26,6 +26,7 @@ class FederatedMultimodalClient:
         criterion: Module,
         device: torch.device,
         fed_config: FederatedClientConfig,
+        total_epochs: int,
         run_id: int = -1,
         scheduler: Optional[_LRScheduler] = None,
         train_loader: Optional[DataLoader] = None,
@@ -53,10 +54,9 @@ class FederatedMultimodalClient:
         self.lr_scheduler = scheduler
 
         self.current_round = 0
-        self.total_rounds = fed_config.n_rounds
         self.print_fn = print_fn
         self.current_epoch = 1
-        self.total_epochs = fed_config.epochs
+        self.total_epochs = total_epochs
 
         self.best_model_path = None
         self.best_model_score = (
@@ -70,6 +70,10 @@ class FederatedMultimodalClient:
         return {
             name: param.data.clone() for name, param in self.model.named_parameters()
         }
+
+    def set_model_parameters(self, model_params: Dict[str, torch.Tensor]):
+        for name, param in self.model.named_parameters():
+            param.data = model_params[name].clone()
 
     def status(self) -> Dict[str, Any]:
         return {
@@ -152,13 +156,13 @@ class FederatedMultimodalClient:
     def train_round(self):
         self.current_epoch = 1
         self.current_round += 1
+        self.model.flatten_parameters()
         self.model.train()
         self.print_fn(
             f"Training round {self.current_round} started on Client: {self.client_id}."
         )
         self.model.metric_recorder.reset()
         epoch_metric_recorder = self.model.metric_recorder.clone()
-
         for epoch in range(1, self.total_epochs + 1):
             epoch_metric_recorder.reset()
             self.current_epoch = epoch
@@ -287,3 +291,6 @@ class FederatedMultimodalClient:
         ## load the best model anyways and return the validation metrics
         self.model.load_state_dict(torch.load(self.best_model_path, weights_only=True))
         return self.evaluate_round(dataloader=self.val_loader)
+
+    def __str__(self) -> str:
+        return f"FederatedMultimodalClient(client_id={self.client_id}, current_round={self.current_round}, total_rounds={self.total_rounds}, current_epoch={self.current_epoch}, total_epochs={self.total_epochs}, best_model_path={self.best_model_path}, best_model_score={self.best_model_score}, best_model_epoch={self.best_model_epoch}, best_model_round={self.best_model_round})"

@@ -237,19 +237,15 @@ if __name__ == "__main__":
                 max_width=15,
             )
 
-        if config.logging.save_metric == "loss":
-            if validation_metrics["loss"] < best_eval_loss:
-                console.print(f"New best model found at epoch {epoch}")
-                best_eval_epoch = epoch
-                best_eval_loss = validation_metrics["loss"]
-                best_metrics = validation_metrics
-        else:
-            target_metric = validation_metrics[config.logging.save_metric]
-            if target_metric > best_metrics[config.logging.save_metric]:
-                console.print(f"New best model found at epoch {epoch}")
-                best_eval_epoch = epoch
-                best_metrics = validation_metrics
-
+        model_state_dict = model.state_dict()
+        os.makedirs(os.path.dirname(config.logging.model_output_path), exist_ok=True)
+        torch.save(
+            model_state_dict,
+            config.logging.model_output_path.replace(".pth", f"_{epoch}.pth"),
+        )
+        console.print(
+            f"Epoch {epoch} saved at {config.logging.model_output_path.replace('.pth', f'_{epoch}.pth')}"
+        )
         # EARLY STOPPING - Based on the target metric
         if config.training.early_stopping:
             patience = (
@@ -261,7 +257,10 @@ if __name__ == "__main__":
                 improvement = (
                     best_metrics[config.logging.save_metric]
                     - validation_metrics[config.logging.save_metric]
-                )  # Improvement means decrease
+                )
+                console.print(
+                    f"Improvement: {improvement}, Best: {best_metrics[config.logging.save_metric]}, Current: {validation_metrics[config.logging.save_metric]}"
+                )
             else:
                 improvement = (
                     validation_metrics[config.logging.save_metric]
@@ -279,15 +278,18 @@ if __name__ == "__main__":
                     )
                     break
 
-        model_state_dict = model.state_dict()
-        os.makedirs(os.path.dirname(config.logging.model_output_path), exist_ok=True)
-        torch.save(
-            model_state_dict,
-            config.logging.model_output_path.replace(".pth", f"_{epoch}.pth"),
-        )
-        console.print(
-            f"Epoch {epoch} saved at {config.logging.model_output_path.replace('.pth', f'_{epoch}.pth')}"
-        )
+        if config.logging.save_metric == "loss":
+            if validation_metrics["loss"] < best_eval_loss:
+                console.print(f"New best model found at epoch {epoch}")
+                best_eval_epoch = epoch
+                best_eval_loss = validation_metrics["loss"]
+                best_metrics = validation_metrics
+        else:
+            target_metric = validation_metrics[config.logging.save_metric]
+            if target_metric > best_metrics[config.logging.save_metric]:
+                console.print(f"New best model found at epoch {epoch}")
+                best_eval_epoch = epoch
+                best_metrics = validation_metrics
     console.print("Training complete")
     console.print(
         f"Best eval epoch was {best_eval_epoch} with a {config.logging.save_metric} of {best_metrics[config.logging.save_metric]}"
@@ -307,10 +309,11 @@ if __name__ == "__main__":
                 os.path.join(config.logging.metrics_path, "validation_plots"),
             ]
         )
+
     to_store = clean_checkpoints(
         os.path.dirname(config.logging.model_output_path), best_eval_epoch
     )
-    assert to_store is not None, "No model to store"
+    assert to_store is not None, f"No model to store, {best_eval_epoch} not found"
 
     console.print("Training complete")
 

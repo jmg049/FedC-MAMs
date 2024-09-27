@@ -1,0 +1,140 @@
+experiment: !ExperimentConfig
+  name: "MOSEI Federated Learning - Simple IID Setup"
+  debug: False
+  device: "cuda"
+  do_test: True
+
+data:
+    train:
+      dataset: "mosei"
+      data_fp: "DATA/MOSEI/aligned_50.pkl"
+      target_modality: "multimodal"
+      split: "train"
+    validation:
+      dataset: "mosei"
+      data_fp: "DATA/MOSEI/aligned_50.pkl"
+      target_modality: "multimodal"
+      split: "valid"
+    test:
+      dataset: "mosei"
+      data_fp: "DATA/MOSEI/aligned_50.pkl"
+      target_modality: "multimodal"
+      split: "test"
+    global_fraction: 0.5
+    distribution_type: "iid"
+    sampling_strategy: "stratified"
+    alpha: 1.0  # Not used for uniform sampling, but included for completeness
+    get_label_fn: "mosei"
+
+federated: 
+  server_config: !FederatedServerConfig
+    num_clients: 6
+    rounds: 20  # Suggested number of federated rounds
+    aggregation_strategy: "fedavg"
+    optimizer: "Adam"
+    optimizer_kwargs:
+      lr: 0.001
+      weight_decay: 0.00001
+    criterion: "cross_entropy"
+    criterion_kwargs: {}
+    epochs: 5
+    early_stopping: True
+    early_stopping_patience: 5
+    early_stopping_metric: "loss"
+    global_model_config: !ModelConfig &model
+      name: "UttFusionModel"
+      input_size_a: 74
+      embd_size_a: 96
+      embd_method_a: "maxpool"
+      input_size_v: 35
+      embd_size_v: 96
+      embd_method_v: "maxpool"
+      input_size_l: 768
+      embd_size_l: 96
+      classification_layers: [96, 96]
+      output_dim: 3
+      dropout: 0.5
+      use_bn: False
+  client_config: !FederatedClientConfig
+    model_config: *model
+    optimizer: "Adam"
+    optimizer_kwargs:
+      lr: 0.001
+      weight_decay: 0.00001
+    criterion: "cross_entropy"
+    criterion_kwargs: {}
+    local_epochs: 5  # Suggested number of local epochs
+    local_batch_size: 128
+    early_stopping: True
+    early_stopping_patience: 5
+    early_stopping_metric: "loss"
+
+logging:
+  save_metric: "NonZeroF1_AVL"
+  log_path: "experiments/mosei_federated/logs/{experiment_name}/{run_id}/"
+  model_output_path: "experiments/mosei_federated/models/{experiment_name}/{run_id}/mosei_federated_model_{save_metric}.pth"
+  metrics_paths: "experiments/mosei_federated/metrics/{experiment_name}/{run_id}/"
+
+metrics:
+  metrics:
+    Accuracy:
+      function: "sklearn.metrics.accuracy_score"
+    F1_Micro:
+      function: "sklearn.metrics.f1_score"
+      kwargs:
+        average: "micro"
+    F1_Macro:
+      function: "sklearn.metrics.f1_score"
+      kwargs:
+        average: "macro"
+    F1_Weighted:
+      function: "sklearn.metrics.f1_score"
+      kwargs:
+        average: "weighted"
+    UAR:
+      function: "sklearn.metrics.recall_score"
+      kwargs:
+        average: "macro"
+        zero_division: 0
+    Precision_Macro:
+      function: "sklearn.metrics.precision_score"
+      kwargs:
+        average: "macro"
+        zero_division: 0
+    Recall_Macro:
+      function: "sklearn.metrics.recall_score"
+      kwargs:
+        average: "macro"
+        zero_division: 0
+    Precision_Weighted:
+      function: "sklearn.metrics.precision_score"
+      kwargs:
+        average: "weighted"
+        zero_division: 0
+    Recall_Weighted:
+      function: "sklearn.metrics.recall_score"
+      kwargs:
+        average: "weighted"
+        zero_division: 0
+    Precision_Micro:
+      function: "sklearn.metrics.precision_score"
+      kwargs:
+        average: "micro"
+        zero_division: 0
+    Recall_Micro:
+      function: "sklearn.metrics.recall_score"
+      kwargs:
+        average: "micro"
+        zero_division: 0
+    NonZeroAcc:
+      function: "metrics.mosi.binary_accuracy_non_zero"
+    NonZeroF1:
+      function: "metrics.mosi.binary_f1_score_non_zero"
+    HasZeroAcc:
+      function: "metrics.mosi.binary_accuracy"
+    HasZeroF1:
+      function: "metrics.mosi.binary_f1_score"
+    ConfusionMatrix:
+      function: "sklearn.metrics.confusion_matrix"
+      kwargs:
+        labels: [0, 1, 2]
