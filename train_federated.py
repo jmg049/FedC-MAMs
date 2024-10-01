@@ -76,11 +76,13 @@ def main(config_path: str, run_id: int = -1):
     global_model_cls = resolve_model_name(
         config.server_config.global_model_config["name"]
     )
-    global_model = global_model_cls(**config.server_config.global_model_config.kwargs)
+    
+    metric_recorder = MetricRecorder(config.metrics)
+    
+    global_model = global_model_cls(**config.server_config.global_model_config.kwargs, metric_recorder=metric_recorder)
     global_model.to(device)
     check_protocol_compliance(global_model, MultimodalModelProtocol)
 
-    global_model.set_metric_recorder(metric_recorder=MetricRecorder(config.metrics))
 
     global_optimizer = config._get_optimizer(global_model, is_global=True)
     global_criterion = config._get_criterion(is_global=True)
@@ -105,7 +107,7 @@ def main(config_path: str, run_id: int = -1):
         client_config = config.get_client_config()
 
         # Initialize client model
-        client_model = global_model_cls(**config.client_config.model_config.kwargs)
+        client_model = global_model_cls(**config.client_config.model_config.kwargs, metric_recorder=metric_recorder.clone())
         client_model.to(device)
 
         optimizer = config._get_optimizer(client_model, is_global=False)
@@ -114,7 +116,6 @@ def main(config_path: str, run_id: int = -1):
         client_train_loader = federated_dataloaders["train"]["clients"][client_id]
         client_val_loader = federated_dataloaders["validation"]["clients"][client_id]
         client_test_loader = federated_dataloaders["test"]["clients"][client_id]
-        client_model.set_metric_recorder(metric_recorder=MetricRecorder(config.metrics))
         client = FederatedMultimodalClient(
             client_id=client_id,
             model=client_model,
@@ -146,6 +147,10 @@ def main(config_path: str, run_id: int = -1):
     # Print final results
     server_logger.info("Federated Learning completed")
     print_all_metrics_tables(results["final_test_results"], console=console)
+    
+    
+    console.print(f"Best Round: {results["best_round"]}")
+    console.print(f"Best Global Performance:\n{results["best_global_performance"]}")
 
     # Save results
     with open(config.server_config.logging_config.metrics_path, "w") as f:

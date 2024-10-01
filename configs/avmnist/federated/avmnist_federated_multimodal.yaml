@@ -1,0 +1,154 @@
+experiment: !ExperimentConfig
+  name: "AVMNIST Federated Learning - IID Setup"
+  debug: False
+  device: "cuda"
+  do_test: True
+
+data:
+  train:
+    dataset: "avmnist"
+    data_fp: "DATA/avmnist/train_subset.csv"
+    target_modality: "multimodal"
+    split: "train"
+    shuffle: True
+    drop_last: True
+    pin_memory: True
+  validation:
+    dataset: "avmnist"
+    data_fp: "DATA/avmnist/validation_subset.csv"
+    target_modality: "multimodal"
+    split: "valid"
+    drop_last: True
+    pin_memory: True
+  test:
+    dataset: "avmnist"
+    data_fp: "DATA/avmnist/test_subset.csv"
+    target_modality: "multimodal"
+    split: "test"
+    drop_last: True
+    pin_memory: True
+  global_fraction: 0.02
+  distribution_type: "iid"
+  sampling_strategy: "stratified"
+  alpha: 1.0  # Not used for uniform sampling, but included for completeness
+  get_label_fn: "avmnist"
+
+federated: 
+  server_config: !FederatedServerConfig
+    num_clients: 30 # for avmnist subset this is 588 samples per client with the global model have 360 samples
+    rounds: 15  # Suggested number of federated rounds
+    aggregation_strategy: "fedavg"
+    optimizer: "Adam"
+    optimizer_kwargs:
+      lr: 0.001
+      weight_decay: 0.00001
+    criterion: "cross_entropy"
+    criterion_kwargs: {}
+    epochs: 1
+    logging_config: 
+      save_metric: "loss"
+      log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/global/"
+      model_output_path: "experiments/avmnist_federated/models/{experiment_name}/{run_id}/global/{round}/avmnist_federated_model_{save_metric}.pth"
+      metrics_paths: "experiments/avmnist_federated/metrics/{experiment_name}/{run_id}/global/{round}"
+    early_stopping: False
+    early_stopping_patience: 10
+    early_stopping_metric: "loss"
+    global_model_config: !ModelConfig &model
+      name: "AVMNIST"
+      audio_encoder: !MNISTAudio
+        conv_block_one_args: !ConvBlock
+          conv_one_in: 1
+          conv_one_out: 32
+        conv_block_two_args: !ConvBlock
+          conv_one_in: 32
+          conv_one_out: 32
+        conv_batch_norm: True
+        hidden_dim: 64
+      image_encoder: !MNISTImage
+        conv_block_one_one_args: !ConvBlock
+          conv_one_in: 1
+          conv_one_out: 32
+        conv_block_one_two_args: !ConvBlock
+          conv_one_in: 32
+          conv_one_out: 64
+        conv_block_two_one_args: !ConvBlock
+          conv_one_in: 64
+          conv_one_out: 64
+        conv_block_two_two_args: !ConvBlock
+          conv_one_in: 64
+          conv_one_out: 64
+        hidden_dim: 128
+        conv_batch_norm: True
+      hidden_dim: 128
+      dropout: 0.5
+      fusion_fn: "concat"
+  client_config: !FederatedClientConfig
+    model_config: *model
+    optimizer: "Adam"
+    optimizer_kwargs:
+      lr: 0.0001
+      weight_decay: 0.00001
+    criterion: "cross_entropy"
+    criterion_kwargs: {}
+    local_epochs: 5
+    logging: 
+      save_metric: "loss"
+      log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/client_{client_id}/"
+      model_output_path: "experiments/avmnist_federated/models/{experiment_name}/{run_id}/client_{client_id}/avmnist_federated_model_{save_metric}.pth"
+      metrics_paths: "experiments/avmnist_federated/metrics/{experiment_name}/{run_id}/client_{client_id}/"
+    local_batch_size: 128
+    early_stopping: False
+    early_stopping_patience: 10
+    early_stopping_metric: "loss"
+
+
+metrics:
+  metrics:
+    Accuracy:
+      function: "sklearn.metrics.accuracy_score"
+    F1_Micro:
+      function: "sklearn.metrics.f1_score"
+      kwargs:
+        average: "micro"
+    F1_Macro:
+      function: "sklearn.metrics.f1_score"
+      kwargs:
+        average: "macro"
+    F1_Weighted:
+      function: "sklearn.metrics.f1_score"
+      kwargs:
+        average: "weighted"
+    Precision_Macro:
+      function: "sklearn.metrics.precision_score"
+      kwargs:
+        average: "macro"
+        zero_division: 0
+    Recall_Macro:
+      function: "sklearn.metrics.recall_score"
+      kwargs:
+        average: "macro"
+        zero_division: 0
+    Precision_Weighted:
+      function: "sklearn.metrics.precision_score"
+      kwargs:
+        average: "weighted"
+        zero_division: 0
+    Recall_Weighted:
+      function: "sklearn.metrics.recall_score"
+      kwargs:
+        average: "weighted"
+        zero_division: 0
+    Precision_Micro:
+      function: "sklearn.metrics.precision_score"
+      kwargs:
+        average: "micro"
+        zero_division: 0
+    Recall_Micro:
+      function: "sklearn.metrics.recall_score"
+      kwargs:
+        average: "micro"
+        zero_division: 0
+    ConfusionMatrix:
+      function: "sklearn.metrics.confusion_matrix"
+      kwargs:
+        labels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]

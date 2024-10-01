@@ -67,7 +67,16 @@ class StandardConfig(Config):
         data_config = DataConfig.from_dict(data_config)
 
         model_config = data["model"]
-        model_config = ModelConfig.from_dict(model_config)
+        model_name = model_config["name"]
+        model_pretrained_path = model_config.get("pretrained_path", None)
+        model_kwargs = {
+            k: v
+            for k, v in model_config.items()
+            if k not in ["name", "pretrained_path"]
+        }
+        model_config = ModelConfig(
+            name=model_name, pretrained_path=model_pretrained_path, kwargs=model_kwargs
+        )
 
         logging_config = data["logging"]
         logging_config = LoggingConfig.from_dict(

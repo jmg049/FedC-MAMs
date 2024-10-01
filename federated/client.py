@@ -1,7 +1,7 @@
 import json
 import os
 from typing import Any, Dict, Optional
-
+from copy import deepcopy
 import numpy as np
 import torch
 from torch.nn import Module
@@ -83,9 +83,9 @@ class FederatedMultimodalClient:
         os.makedirs(self.logging_output_dir, exist_ok=True)
 
     def get_model_parameters(self) -> Dict[str, torch.Tensor]:
-        return {
-            name: param.data.clone() for name, param in self.model.named_parameters()
-        }
+        ## return a deep copy of the state_dict
+        state_dict = deepcopy(self.model.state_dict())
+        return state_dict
 
     def set_model_parameters(self, model_params: Dict[str, torch.Tensor]):
         for name, param in self.model.named_parameters():

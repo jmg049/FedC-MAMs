@@ -76,14 +76,11 @@ class AVMNISTDataSet(Dataset):
 
         if not isinstance(target_modality, Modality):
             modality = Modality.from_str(target_modality)
-        assert (
-            modality
-            in [
-                Modality.AUDIO,
-                Modality.IMAGE,
-                Modality.MULTIMODAL,
-            ]
-        ), f"Invalid modality: {modality}, must be one of [{Modality.AUDIO}, {Modality.IMAGE}, {Modality.MULTIMODAL}]"
+        assert modality in [
+            Modality.AUDIO,
+            Modality.IMAGE,
+            Modality.MULTIMODAL,
+        ], f"Invalid modality: {modality}, must be one of [{Modality.AUDIO}, {Modality.IMAGE}, {Modality.MULTIMODAL}]"
 
         self.target_modality = modality
 
@@ -130,8 +127,8 @@ class AVMNISTDataSet(Dataset):
                 }
             case Modality.MULTIMODAL:
                 return {
-                    "Audio": A,
-                    "Image": I,
+                    "A": A,
+                    "I": I,
                     "label": label,
                     "missing_index": missing_index,
                     "miss_type": miss_type,

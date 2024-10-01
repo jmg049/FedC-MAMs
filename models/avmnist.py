@@ -18,6 +18,7 @@ from torch.optim import Optimizer
 from modalities import Modality
 
 from models import ConvBlock, ConvBlockArgs
+from utils.metric_recorder import MetricRecorder
 
 
 class MNISTAudio(Module):
@@ -116,6 +117,7 @@ class AVMNIST(Module):
         audio_encoder: MNISTAudio,
         image_encoder: MNISTImage,
         hidden_dim: int,
+        metric_recorder: MetricRecorder,
         dropout: float = 0.0,
         fusion_fn: str = "concat",
     ):
@@ -144,9 +146,6 @@ class AVMNIST(Module):
             case _:
                 raise ValueError(f"Unknown fusion function: {fusion_fn}")
 
-        self.metric_recorder = None
-
-    def set_metric_recorder(self, metric_recorder):
         self.metric_recorder = metric_recorder
 
     def get_encoder(self, modality: str | Modality) -> Module:
@@ -160,6 +159,9 @@ class AVMNIST(Module):
                     return self.image_encoder
                 case _:
                     raise ValueError(f"Unknown modality: {modality}")
+
+    def flatten_parameters(self):
+        pass
 
     def forward(
         self,
@@ -273,9 +275,7 @@ class AVMNIST(Module):
             )
 
             miss_type = np.array(miss_type)
-            print(miss_type)
             for m_type in set(miss_type):
-                print(m_type)
                 mask = miss_type == m_type
                 mask_preds = predictions[mask]
                 mask_labels = labels[mask]

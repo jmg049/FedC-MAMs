@@ -21,20 +21,24 @@ from utils import SafeDict
 
 def federated_server_constructor(loader, node):
     value = loader.construct_mapping(node)
-    return FederatedServerConfig(**value)
+    return FederatedCMAMServerConfig(**value)
 
 
 def federated_client_constructor(loader, node):
     value = loader.construct_mapping(node)
-    return FederatedClientConfig(**value)
+    return FederatedCMAMClientConfig(**value)
 
 
-yaml.SafeLoader.add_constructor("!FederatedServerConfig", federated_server_constructor)
-yaml.SafeLoader.add_constructor("!FederatedClientConfig", federated_client_constructor)
+yaml.SafeLoader.add_constructor(
+    "!FederatedCMAMServerConfig", federated_server_constructor
+)
+yaml.SafeLoader.add_constructor(
+    "!FederatedCMAMClientConfig", federated_client_constructor
+)
 
 
 @dataclass(kw_only=True)
-class FederatedClientConfig(BaseConfig):
+class FederatedCMAMClientConfig(BaseConfig):
     optimizer: str
     optimizer_kwargs: Dict[str, Any]
     criterion: str
@@ -104,7 +108,7 @@ class FederatedDataConfig(DataConfig):
 
 
 @dataclass(kw_only=True)
-class FederatedServerConfig(BaseConfig):
+class FederatedCMAMServerConfig(BaseConfig):
     rounds: int
     num_clients: int
     aggregation_strategy: str
@@ -123,8 +127,8 @@ class FederatedServerConfig(BaseConfig):
 
 @dataclass(kw_only=True)
 class FederatedConfig(Config):
-    server_config: FederatedServerConfig
-    client_config: FederatedClientConfig
+    server_config: FederatedCMAMServerConfig
+    client_config: FederatedCMAMClientConfig
     data_config: FederatedDataConfig
 
     @classmethod

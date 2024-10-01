@@ -2,6 +2,7 @@ import numpy as np
 from torch.utils.data import Dataset
 from typing import Any, Callable, Dict, Optional, List, Literal
 from scipy.stats import entropy
+from tqdm import tqdm
 
 
 class FederatedDataSplitter:
@@ -101,7 +102,9 @@ class FederatedDataSplitter:
             for label in unique_labels
         }
 
-        for client_id in range(1, self.num_clients + 1):
+        for client_id in tqdm(
+            range(1, self.num_clients + 1), desc="Stratified Split", ascii=True
+        ):
             client_indices = []
             for label in unique_labels:
                 indices = label_indices[label]

@@ -12,7 +12,7 @@ from tqdm import tqdm
 from config.federated_config import FederatedConfig
 from federated import FederatedResult
 from federated.client import FederatedMultimodalClient
-from models import MultimodalModelProtocol
+from models import CMAMProtocol, MultimodalModelProtocol
 from utils import SafeDict, print_all_metrics_tables
 
 
@@ -20,12 +20,13 @@ class FederatedCongruentServer:
     def __init__(
         self,
         model: MultimodalModelProtocol,
+        cmam: CMAMProtocol,
         global_train_data: DataLoader,
         global_val_data: DataLoader,
         global_test_data: DataLoader,
         num_clients: int,
         device: torch.device,
-        config: FederatedConfig,
+        config: FederatedCMAMConfig,
         aggregation_strategy: Literal["fedavg"] = "fedavg",
         selection_strategy: Literal["all", "random"] = "all",
     ):
@@ -33,6 +34,7 @@ class FederatedCongruentServer:
             hasattr(model, "metric_recorder") and model.metric_recorder is not None
         ), "Model must have its metric recorder set and not None"
         self.global_model = model
+        self.global_cmam = cmam
         self.aggregation_strategy = aggregation_strategy
         self.num_clients = num_clients
         self.current_round = 0
@@ -325,21 +327,6 @@ class FederatedCongruentServer:
 
         aggregated_params = self.aggregate_models(client_results)
         self.update_global_model(aggregated_params)
-        print_fn(f"Global model updated after round {self.current_round}")
-        model_path = (
-            self.config.server_config.logging_config.model_output_path.format_map(
-                SafeDict(round=str(self.current_round))
-            )
-        )
-
-        model_path = model_path.replace(".pth", "_aggregated.pth")
-
-        torch.save(
-            self.global_model.state_dict(),
-            model_path,
-        )
-
-        print_fn(f"Global model saved at {model_path}")
 
         eval_results = self.evaluate_global_model(
             data=self.global_test_data, criterion=criterion
@@ -404,39 +391,37 @@ class FederatedCongruentServer:
                 f.write(json_str)
 
             # Check if this round's performance is the best so far
-            save_metric = self.config.server_config.logging_config.save_metric
-            current_metric_value = global_performance[save_metric]
-            best_metric_value = (
-                best_global_performance[save_metric]
-                if best_global_performance
-                else None
-            )
-            minimising = True if save_metric == "loss" else False
-
             if (
                 best_global_performance is None
-                or (minimising and current_metric_value < best_metric_value)
-                or (not minimising and current_metric_value > best_metric_value)
+                or global_performance[
+                    self.config.server_config.logging_config.save_metric
+                ]
+                > best_global_performance[
+                    self.config.server_config.logging_config.save_metric
+                ]
             ):
                 best_global_performance = global_performance
                 best_global_model_state = self.global_model.state_dict()
-                best_round = self.current_round
+                best_round = round
 
-                # Create the directory if it doesn't exist
-                output_dir = os.path.dirname(
-                    self.config.server_config.logging_config.model_output_path
+                os.makedirs(
+                    os.path.dirname(
+                        self.config.server_config.logging_config.model_output_path.format_map(
+                            SafeDict(round=str(self.current_round))
+                        )
+                    ),
+                    exist_ok=True,
                 )
-                os.makedirs(output_dir, exist_ok=True)
-
-                # Create a filename that includes the round number and metric value
-                filename = f"best_model_round_{best_round}_{save_metric}_{current_metric_value:.4f}.pth"
-                full_path = os.path.join(output_dir, filename)
-
                 # Save the best model
-                torch.save(best_global_model_state, full_path)
-                print(
-                    f"New best model saved at round {best_round} with {save_metric} of {current_metric_value:.4f}"
+                torch.save(
+                    best_global_model_state,
+                    self.config.server_config.logging_config.model_output_path.format_map(
+                        SafeDict(round=str(self.current_round))
+                    ).replace(
+                        ".pth", "_best.pth"
+                    ),
                 )
+                print_fn(f"New best model saved at round {round}")
 
             # Early stopping check
             if self.config.server_config.early_stopping:
