@@ -1,11 +1,16 @@
 import os
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Dict
 from rich.table import Table
 from rich.console import Console
 from rich.text import Text
 from rich import box
+
+
+class SafeDict(dict):
+    def __missing__(self, key):
+        return "{" + key + "}"
 
 
 def call_latex_to_image(
@@ -84,10 +89,14 @@ def call_latex_to_image(
 
 
 def print_metrics_tables(
-    metrics, max_cols_per_row=10, max_width=20, console=None
+    metrics: Dict[str, Any],
+    max_cols_per_row: int = 5,
+    max_width: int = 20,
+    console: Console = None,
+    target_metric: str = None,
 ) -> None:
     """
-    Print metrics tables with bordered formatting for improved readability.
+    Print metrics tables with bordered formatting, grouped by conditions.
 
     :param metrics: Dictionary of metric names and values
     :param max_cols_per_row: Maximum number of columns per table row
@@ -97,45 +106,118 @@ def print_metrics_tables(
     if console is None:
         console = Console()
 
-    n_tables = len(metrics) // max_cols_per_row
-    if len(metrics) % max_cols_per_row != 0:
-        n_tables += 1
+    def get_condition(metric_name: str) -> str:
+        parts = metric_name.split("_")
+        return parts[-1] if len(parts) > 1 and parts[-1].isupper() else ""
 
-    for i in range(n_tables):
-        table = Table(
-            title=f"Metrics Table {i+1}",
-            show_header=True,
-            header_style="bold",
-            box=box.SQUARE,  # Changed to SQUARE for full borders
-            border_style="blue",
+    def sort_key(item):
+        metric, _ = item
+        condition = get_condition(metric)
+        return (
+            condition == "",  # No condition first
+            -len(condition),  # Longer conditions before shorter ones
+            condition,  # Alphabetical order for same-length conditions
+            metric,  # Original order for metrics with the same condition
         )
 
-        keys = list(metrics.keys())[i * max_cols_per_row : (i + 1) * max_cols_per_row]
-        values = [metrics[k] for k in keys]
+    # Group metrics by condition
+    grouped_metrics = {}
+    for metric, value in sorted(metrics.items(), key=sort_key):
+        condition = get_condition(metric)
+        if condition:
+            metric_name = "_".join(metric.split("_")[:-1])
+        else:
+            metric_name = metric
+            condition = "No Condition"
 
-        for k in keys:
-            wrapped_header = Text(k, style="bold")
-            wrapped_header.overflow = "fold"
-            table.add_column(wrapped_header, justify="center", width=max_width)
+        if condition not in grouped_metrics:
+            grouped_metrics[condition] = {}
+        grouped_metrics[condition][metric_name] = value
 
-        # Add data row
-        formatted_values = [
-            f"{v:.4f}" if isinstance(v, float) else str(v) for v in values
-        ]
+    # Print tables for each condition
+    for condition, condition_metrics in grouped_metrics.items():
+        if target_metric is not None and target_metric != condition:
+            if condition == "No Condition":
+                ## try and extract the following mae, mse, cosine_sim, mmd
+                loss_metrics = {}
+                for condi in condition_metrics.keys():
+                    if condi in [
+                        "mae",
+                        "mse",
+                        "cosine_sim",
+                        "mmd",
+                        "cls_loss",
+                        "moment_loss",
+                    ]:
+                        loss_metrics[condi] = condition_metrics[condi]
+                if len(loss_metrics) > 0:
+                    console.print("\n[bold]Table: Loss[/bold]")
+                    table = Table(box=box.SQUARE, border_style="blue")
+                    keys = list(loss_metrics.keys())
+                    for i in range(0, len(keys), max_cols_per_row):
+                        subtable_keys = keys[i : i + max_cols_per_row]
 
-        table.add_row(*formatted_values)
+                        # Add columns
+                        for k in subtable_keys:
+                            wrapped_header = Text(k, style="bold")
+                            wrapped_header.overflow = "fold"
+                            table.add_column(
+                                wrapped_header, justify="center", width=max_width
+                            )
 
-        console.print(table)
-        console.print("")  # Add a blank line between tables
+                        # Add data row
+                        values = [loss_metrics[k] for k in subtable_keys]
+                        formatted_values = [
+                            f"{v:.4f}" if isinstance(v, float) else str(v)
+                            for v in values
+                        ]
+                        table.add_row(*formatted_values)
+
+                        # Print the subtable
+                        console.print(table)
+
+                        # Reset the table for the next set of columns
+                        table = Table(box=box.SQUARE, border_style="blue")
+            continue
+        console.print(f"\n[bold]Table: {condition}[/bold]")
+
+        table = Table(box=box.SQUARE, border_style="blue")
+
+        keys = list(condition_metrics.keys())
+        for i in range(0, len(keys), max_cols_per_row):
+            subtable_keys = keys[i : i + max_cols_per_row]
+
+            # Add columns
+            for k in subtable_keys:
+                wrapped_header = Text(k, style="bold")
+                wrapped_header.overflow = "fold"
+                table.add_column(wrapped_header, justify="center", width=max_width)
+
+            # Add data row
+            values = [condition_metrics[k] for k in subtable_keys]
+            formatted_values = [
+                f"{v:.4f}" if isinstance(v, float) else str(v) for v in values
+            ]
+            table.add_row(*formatted_values)
+
+            # Print the subtable
+            console.print(table)
+
+            # Reset the table for the next set of columns
+            table = Table(box=box.SQUARE, border_style="blue")
+
+    # Check if 'loss' exists and print it last
+    if "loss" in metrics:
+        console.print("\n[bold]Loss:[/bold]", metrics["loss"])
 
 
 def print_all_metrics_tables(
-    metrics, max_cols_per_row=10, max_width=20, console=None
+    metrics, max_cols_per_row=10, max_width=20, console=None, target_metric=None
 ) -> None:
     if console is None:
         console = Console()
     console.print("[bold]Metrics Dashboard[/bold]")
-    print_metrics_tables(metrics, max_cols_per_row, max_width, console)
+    print_metrics_tables(metrics, max_cols_per_row, max_width, console, target_metric)
 
 
 def clean_checkpoints(checkpoints_dir, store_epoch, print_fn=print) -> None | Any:
@@ -164,3 +246,46 @@ def clean_checkpoints(checkpoints_dir, store_epoch, print_fn=print) -> None | An
 
 def prepare_path(path):
     return os.path.abspath(path)
+
+
+# if __name__ == "__main__":
+#     example_metrics = {
+#         "Accuracy": 0.5288,
+#         "F1_Micro": 0.5288,
+#         "F1_Macro": 0.3664,
+#         "F1_Weighted": 0.4519,
+#         "UAR": 0.4205,
+#         "Precision_Macro": 0.3333,
+#         "Recall_Macro": 0.4205,
+#         "Precision_Weighted": 0.4031,
+#         "Recall_Weighted": 0.5288,
+#         "Precision_Micro": 0.5288,
+#         "Recall_Micro": 0.5288,
+#         "NonZeroAcc": 0.5893,
+#         "NonZeroF1": 0.6131,
+#         "HasZeroAcc": 0.6980,
+#         "HasZeroF1": 0.6985,
+#         "Accuracy_AVL": 0.5502,
+#         "F1_Micro_AVL": 0.5502,
+#         "F1_Macro_AVL": 0.3287,
+#         "F1_Weighted_AVL": 0.4361,
+#         "UAR_AVL": 0.4108,
+#         "Precision_Macro_AVL": 0.3840,
+#         "Recall_Macro_AVL": 0.4108,
+#         "Precision_Weighted_AVL": 0.4775,
+#         "Recall_Weighted_AVL": 0.5502,
+#         "Precision_Micro_AVL": 0.5502,
+#         "Recall_Micro_AVL": 0.5502,
+#         "NonZeroAcc_AVL": 0.5502,
+#         "NonZeroF1_AVL": 0.6541,
+#         "HasZeroAcc_AVL": 0.7869,
+#         "HasZeroF1_AVL": 0.8436,
+#         "Accuracy_A": 0.5400,
+#         "F1_Micro_A": 0.5400,
+#         "F1_Macro_A": 0.3716,
+#         "F1_Weighted_A": 0.4782,
+#         "UAR_A": 0.4366,
+#         "loss": 0.9629,
+#     }
+
+#     print_metrics_tables(example_metrics)

@@ -16,6 +16,7 @@ from config.config import (
     resolve_optimizer,
 )
 from data.label_functions import cmu_get_label_fn
+from utils import SafeDict
 
 
 def federated_server_constructor(loader, node):
@@ -44,6 +45,7 @@ class FederatedClientConfig(BaseConfig):
     scheduler: Optional[str] = None
     scheduler_kwargs: Dict[str, Any] = field(default_factory=dict)
     target_metric: str = "loss"
+    logging: LoggingConfig
     output_dir: str = "federated_output"
     early_stopping: bool
     early_stopping_patience: int
@@ -110,6 +112,7 @@ class FederatedServerConfig(BaseConfig):
     criterion: str
     criterion_kwargs: Dict[str, Any]
     epochs: int
+    logging_config: LoggingConfig
     early_stopping: bool
     early_stopping_patience: int
     early_stopping_metric: str
@@ -136,12 +139,38 @@ class FederatedConfig(Config):
         server_config = federated_config["server_config"]
         client_config = federated_config["client_config"]
 
-        logging_config = data["logging"]
-        logging_config = LoggingConfig.from_dict(
-            logging_config,
+        server_config.logging_config["model_output_path"] = (
+            server_config.logging_config["model_output_path"].format_map(
+                SafeDict(
+                    save_metric=server_config.logging_config["save_metric"],
+                    experiment_name=experiment_config.name,
+                    run_id=experiment_config.run_id,
+                )
+            )
+        )
+
+        server_config.logging_config = LoggingConfig.from_dict(
+            server_config.logging_config,
             experiment_name=experiment_config.name,
             run_id=experiment_config.run_id,
         )
+
+        client_config.logging["model_output_path"] = client_config.logging[
+            "model_output_path"
+        ].format_map(
+            SafeDict(
+                save_metric=client_config.logging["save_metric"],
+                experiment_name=experiment_config.name,
+                run_id=experiment_config.run_id,
+            )
+        )
+
+        client_config.logging = LoggingConfig.from_dict(
+            client_config.logging,
+            experiment_name=experiment_config.name,
+            run_id=experiment_config.run_id,
+        )
+
         metrics_config = data["metrics"]
         metrics_config = MetricsConfig.from_dict(metrics_config)
 
@@ -150,7 +179,7 @@ class FederatedConfig(Config):
             data_config=data_config,
             server_config=server_config,
             client_config=client_config,
-            logging=logging_config,
+            logging=None,
             metrics=metrics_config,
         )
 

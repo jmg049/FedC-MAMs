@@ -15,6 +15,7 @@ from config import CMAMConfig, resolve_model_name
 from data import build_dataloader
 from missing_index import missing_pattern
 from models import CMAMProtocol, MultimodalModelProtocol, check_protocol_compliance
+from models.cmams import DualCMAM
 from utils import (
     call_latex_to_image,
     clean_checkpoints,
@@ -125,16 +126,20 @@ if __name__ == "__main__":
     cmam_cfg = config.cmam
 
     input_encoder_info = cmam_cfg.input_encoder_info
-    target_modality = cmam_cfg.target_modality
-    cmam_cls = resolve_model_name(cmam_cfg.name)
+    cmam_name = cmam_cfg.name
+
+    metric_recorder = MetricRecorder(config.prediction_metrics)
+
+    cmam_cls = resolve_model_name(cmam_cfg["name"])
     # cmam_cfg.pop("name")  # safe since we just used it
     cmam = cmam_cls(
         input_encoder_info=input_encoder_info,
+        metric_recorder=metric_recorder,
         **cmam_cfg.__dict__(),
     )
     check_protocol_compliance(cmam, CMAMProtocol)
-    cmam.set_predictions_metric_recorder(MetricRecorder(config.prediction_metrics))
-    cmam.set_rec_metric_recorder(MetricRecorder(config.rec_metrics))
+    # cmam.set_predictions_metric_recorder(MetricRecorder(config.prediction_metrics))
+    # cmam.set_rec_metric_recorder(MetricRecorder(config.rec_metrics))
 
     # kaiming_init(cmam)
     criterion_kwargs = config.training.criterion_kwargs
@@ -166,7 +171,8 @@ if __name__ == "__main__":
         scheduler = config.get_scheduler(optimizer=optimizer)
         console.print("Scheduler created")
         logger.info(f"Scheduler created\n{scheduler}")
-
+    else:
+        scheduler = None
     console.print("Optimizer and criterion created")
     logger.info(f"Optimizer and criterion created\n{optimizer}\n{cmam_cfg}")
 
@@ -188,7 +194,7 @@ if __name__ == "__main__":
         epoch_iter = 0  # the number of training iterations in current epoch, reset to 0 every epoch
 
         # epoch_metric_recorder = model.metric_recorder.clone()
-        epoch_rec_metric_recorder = cmam.rec_metric_recorder.clone()
+        epoch_rec_metric_recorder = cmam.metric_recorder.clone()
         # epoch_cls_metric_recorder = cmam.predictions_metric_recorder.clone()
 
         for i, data in tqdm(
@@ -230,7 +236,7 @@ if __name__ == "__main__":
         print_all_metrics_tables(
             metrics=train_rec_metrics,
             console=console,
-            max_cols_per_row=15,
+            max_cols_per_row=16,
             max_width=20,
         )
 
@@ -239,13 +245,10 @@ if __name__ == "__main__":
             % (epoch, epochs, time.time() - epoch_start_time)
         )
 
-        scheduler.step()
-        logger.info("Learning rate = %.7f" % optimizer.param_groups[0]["lr"])
-
         ########################################################################################
 
         cmam.reset_metric_recorders()
-        epoch_rec_metric_recorder = cmam.rec_metric_recorder.clone()
+        epoch_rec_metric_recorder = cmam.metric_recorder.clone()
         # epoch_cls_metric_recorder = cmam.predictions_metric_recorder.clone()
         for batch in tqdm(
             val_dataset,
@@ -276,54 +279,28 @@ if __name__ == "__main__":
                 "cmam_validation",
             ),
         )
+
+        if scheduler is not None:
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                scheduler.step(validation_metrics["loss"])
+            else:
+                scheduler.step()
+        logger.info("Learning rate = %.7f" % optimizer.param_groups[0]["lr"])
         console.rule("Validation Metrics")
 
         print_all_metrics_tables(
             metrics=validation_metrics,
             console=console,
-            max_cols_per_row=15,
+            max_cols_per_row=16,
             max_width=15,
+            target_metric="".join(
+                str(k)[0] for k in list(config.cmam.input_encoder_info.keys())
+            ),
         )
 
+        # explicity print the loss terms as well
+
         #########################################################################################
-
-        # show test result for debugging
-        if do_test and verbose and epoch % 5 == 0:
-            cmam.reset_metric_recorders()
-
-            epoch_rec_metric_recorder = cmam.rec_metric_recorder.clone()
-
-            for batch in tqdm(tst_dataset, desc="Test", unit="Batches", colour="green"):
-                results = cmam.evaluate(
-                    batch=batch,
-                    labels=batch["label"],
-                    cmam_criterion=cmam_criterion,
-                    device=device,
-                    trained_model=model,
-                )
-
-                epoch_rec_metric_recorder.update_from_dict(results)
-            test_cm = epoch_rec_metric_recorder.get("ConfusionMatrix", default=None)
-            if test_cm is not None:
-                test_cm = np.sum(test_cm, axis=0)
-                tqdm.write(str(test_cm))
-                del epoch_rec_metric_recorder.results["ConfusionMatrix"]
-
-            epoch_rec_metrics = epoch_rec_metric_recorder.get_average_metrics(
-                save_to=os.path.join(
-                    f"{config.logging.metrics_path.rsplit('.', 1)[0]}_rec",
-                    "cmam_validation",
-                ),
-                epoch=epoch,
-            )
-
-            console.rule("Test Metrics")
-            print_all_metrics_tables(
-                metrics=epoch_rec_metrics,
-                console=console,
-                max_cols_per_row=15,
-                max_width=15,
-            )
 
         model_state_dict = cmam.state_dict()
         os.makedirs(os.path.dirname(config.logging.model_output_path), exist_ok=True)
@@ -367,6 +344,9 @@ if __name__ == "__main__":
                         f"Early stopping at epoch {epoch} due to no improvement in {config.logging.save_metric}"
                     )
                     break
+
+        if hasattr(cmam, "modality_weights"):
+            console.print(f"Modality weights: {cmam.modality_weights}")
 
         # record epoch with best result as per the target metric
 
@@ -417,11 +397,13 @@ if __name__ == "__main__":
             )
         )
         cmam.reset_metric_recorders()
-        epoch_rec_metric_recorder = cmam.rec_metric_recorder.clone()
+        epoch_rec_metric_recorder = cmam.metric_recorder.clone()
         preds = []
         labels = []
         rec_embds = []
+        rec_embds_two = []
         target_embds = []
+        target_embds_two = []
         for batch in tqdm(tst_dataset, desc="Test", unit="Batches", colour="green"):
             miss_type = batch["miss_type"]
             results = cmam.evaluate(
@@ -436,16 +418,30 @@ if __name__ == "__main__":
             miss_type = np.array(miss_type)
 
             target_miss_type_mask = miss_type == config.training.target_missing_type
-
             preds.append(results["predictions"][target_miss_type_mask])
             labels.append(results["labels"][target_miss_type_mask])
-            rec_embds.append(results["rec_embd"][target_miss_type_mask])
-            target_embds.append(results["target_embd"][target_miss_type_mask])
+
+            if isinstance(cmam, DualCMAM):
+                rec_embds.append(results["rec_embd_one"][target_miss_type_mask])
+                rec_embds_two.append(results["rec_embd_two"][target_miss_type_mask])
+                target_embds.append(results["target_embd_one"][target_miss_type_mask])
+                target_embds_two.append(
+                    results["target_embd_two"][target_miss_type_mask]
+                )
+                del results["rec_embd_one"]
+                del results["rec_embd_two"]
+                del results["target_embd_one"]
+                del results["target_embd_two"]
+
+            else:
+                rec_embds.append(results["rec_embd"][target_miss_type_mask])
+                target_embds.append(results["target_embd"][target_miss_type_mask])
+                del results["rec_embd"]
+                del results["target_embd"]
             # delete since they don't need to go to the metric recorder
             del results["predictions"]
             del results["labels"]
-            del results["rec_embd"]
-            del results["target_embd"]
+
             epoch_rec_metric_recorder.update_from_dict(results)
         test_cm = epoch_rec_metric_recorder.get("ConfusionMatrix", default=None)
         if test_cm is not None:
@@ -469,26 +465,49 @@ if __name__ == "__main__":
         ## detach and convert to numpy
         preds = np.concatenate([p.detach().cpu().numpy() for p in preds], axis=0)
         labels = np.concatenate([l.detach().cpu().numpy() for l in labels], axis=0)
-        rec_embds = np.concatenate(
-            [r.detach().cpu().numpy() for r in rec_embds], axis=0
-        )
-        target_embds = np.concatenate(
-            [t.detach().cpu().numpy() for t in target_embds], axis=0
-        )
-        ## save them to disk
-        np.save(os.path.join(result_dir, "predictions_test.npy"), preds)
-        np.save(os.path.join(result_dir, "labels_test.npy"), labels)
-        np.save(os.path.join(result_dir, "rec_embds_test.npy"), rec_embds)
-        np.save(
-            os.path.join(result_dir, "target_embds_test.npy"),
-            target_embds,
-        )
+
+        # if isinstance(cmam, DualCMAM):
+        #     np.save(
+        #         os.path.join(result_dir, "rec_embds_one_test.npy"),
+        #         np.concatenate([r for r in rec_embds], axis=0),
+        #     )
+        #     np.save(
+        #         os.path.join(result_dir, "rec_embds_two_test.npy"),
+        #         np.concatenate([r for r in rec_embds_two], axis=0),
+        #     )
+
+        #     np.save(
+        #         os.path.join(result_dir, "target_embds_one_test.npy"),
+        #         np.concatenate([r for r in target_embds], axis=0),
+        #     )
+
+        #     np.save(
+        #         os.path.join(result_dir, "target_embds_two_test.npy"),
+        #         np.concatenate([r for r in target_embds_two], axis=0),
+        #     )
+
+        # else:
+        #     np.save(os.path.join(result_dir, "rec_embds_test.npy"), rec_embds)
+        #     np.save(
+        #         os.path.join(result_dir, "target_embds_test.npy"),
+        #         target_embds,
+        #     )
+
+        # ## save them to disk
+        # np.save(os.path.join(result_dir, "predictions_test.npy"), preds)
+        # np.save(os.path.join(result_dir, "labels_test.npy"), labels)
 
         ## start a completely independent process to generate the visualizations
         input_modalities = "-".join(
             [str(k) for k in config.cmam.input_encoder_info.keys()]
         )
-        target_modality = str(config.cmam.target_modality)
+
+        if hasattr(config.cmam, "target_modality"):
+            target_modality = str(config.cmam.target_modality)
+        else:
+            target_modality = (
+                config.cmam.target_modality_one + "-" + config.cmam.target_modality_two
+            )
 
         dataset_name = config.data.datasets["test"].dataset
 
@@ -523,7 +542,7 @@ if __name__ == "__main__":
         print_all_metrics_tables(
             metrics=epoch_rec_metrics,
             console=console,
-            max_cols_per_row=15,
+            max_cols_per_row=16,
             max_width=15,
         )
 

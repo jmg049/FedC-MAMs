@@ -1,10 +1,6 @@
-from os import PathLike
-from pathlib import Path
 import time
-from typing import Any, Callable, Dict, Literal, Optional
+from typing import Any, Dict
 
-import numpy as np
-from scipy.stats import entropy
 from torch.utils.data import DataLoader, Dataset
 
 from config import DataConfig
@@ -181,7 +177,7 @@ def create_federated_dataloaders(
         }
 
         # Set default values for dataloader arguments if not provided
-        dataloader_args.setdefault("batch_size", 32)
+        dataloader_args.setdefault("batch_size", 128)
         dataloader_args.setdefault("shuffle", True if data_split == "train" else False)
         dataloader_args.setdefault("num_workers", 0)
         dataloader_args.setdefault("pin_memory", False)

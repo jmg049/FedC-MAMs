@@ -16,7 +16,6 @@ MASK_LOOKUP = {
 
 
 class AVMNISTDataSet(Dataset):
-
     NUM_CLASSES = 10
 
     def __init__(
@@ -77,11 +76,14 @@ class AVMNISTDataSet(Dataset):
 
         if not isinstance(target_modality, Modality):
             modality = Modality.from_str(target_modality)
-        assert modality in [
-            Modality.AUDIO,
-            Modality.IMAGE,
-            Modality.MULTIMODAL,
-        ], f"Invalid modality: {modality}, must be one of [{Modality.AUDIO}, {Modality.IMAGE}, {Modality.MULTIMODAL}]"
+        assert (
+            modality
+            in [
+                Modality.AUDIO,
+                Modality.IMAGE,
+                Modality.MULTIMODAL,
+            ]
+        ), f"Invalid modality: {modality}, must be one of [{Modality.AUDIO}, {Modality.IMAGE}, {Modality.MULTIMODAL}]"
 
         self.target_modality = modality
 
@@ -89,7 +91,6 @@ class AVMNISTDataSet(Dataset):
         return len(self.missing_index) if self.split != "train" else len(self.data)
 
     def __getitem__(self, index):
-
         if self.split != "train":
             feat_idx = index // 3  # totally 3 missing types
             missing_index = self.missing_index[index]

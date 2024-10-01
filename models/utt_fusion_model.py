@@ -162,6 +162,8 @@ class UttFusionModel(Module):
                 metrics = self.metric_recorder.calculate_metrics(
                     predictions=predictions, targets=labels
                 )
+                if isinstance(metrics["Accuracy"], list) and metrics["Accuracy"] == 0.0:
+                    print()
                 miss_type = np.array(miss_type)
                 for m_type in set(miss_type):
                     mask = miss_type == m_type
@@ -242,6 +244,8 @@ class UttFusionModel(Module):
             metrics = self.metric_recorder.calculate_metrics(
                 predictions=predictions, targets=labels
             )
+            if isinstance(metrics["Accuracy"], list) and metrics["Accuracy"] == 0.0:
+                print()
 
         return {"loss": loss.item(), **metrics}
 

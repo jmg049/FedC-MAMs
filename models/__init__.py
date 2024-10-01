@@ -123,14 +123,12 @@ class ConvBlockArgs:
 
 
 class ConvBlock(Module):
-
     def __init__(
         self,
         conv_block_one_args: ConvBlockArgs,
         conv_block_two_args: ConvBlockArgs,
         batch_norm: bool = True,
     ) -> "ConvBlock":
-
         super(ConvBlock, self).__init__()
         self.conv_one = Conv2d(
             conv_block_one_args.conv_one_in,

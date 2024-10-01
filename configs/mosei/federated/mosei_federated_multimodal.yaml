@@ -15,12 +15,14 @@ data:
       data_fp: "DATA/MOSEI/aligned_50.pkl"
       target_modality: "multimodal"
       split: "valid"
+      shuffle: True
     test:
       dataset: "mosei"
       data_fp: "DATA/MOSEI/aligned_50.pkl"
       target_modality: "multimodal"
       split: "test"
-    global_fraction: 0.5
+      shuffle: True
+    global_fraction: 0.1
     distribution_type: "iid"
     sampling_strategy: "stratified"
     alpha: 1.0  # Not used for uniform sampling, but included for completeness
@@ -28,7 +30,7 @@ data:
 
 federated: 
   server_config: !FederatedServerConfig
-    num_clients: 6
+    num_clients: 12
     rounds: 20  # Suggested number of federated rounds
     aggregation_strategy: "fedavg"
     optimizer: "Adam"
@@ -38,8 +40,13 @@ federated:
     criterion: "cross_entropy"
     criterion_kwargs: {}
     epochs: 5
-    early_stopping: True
-    early_stopping_patience: 5
+    logging_config: 
+      save_metric: "NonZeroF1_AVL"
+      log_path: "experiments/mosei_federated/logs/{experiment_name}/{run_id}/global/"
+      model_output_path: "experiments/mosei_federated/models/{experiment_name}/{run_id}/global/{round}/mosei_federated_model_{save_metric}.pth"
+      metrics_paths: "experiments/mosei_federated/metrics/{experiment_name}/{run_id}/global/{round}"
+    early_stopping: False
+    early_stopping_patience: 10
     early_stopping_metric: "loss"
     global_model_config: !ModelConfig &model
       name: "UttFusionModel"
@@ -59,21 +66,20 @@ federated:
     model_config: *model
     optimizer: "Adam"
     optimizer_kwargs:
-      lr: 0.001
+      lr: 0.0001
       weight_decay: 0.00001
     criterion: "cross_entropy"
     criterion_kwargs: {}
-    local_epochs: 5  # Suggested number of local epochs
+    local_epochs: 10  
+    logging: 
+      save_metric: "NonZeroF1_AVL"
+      log_path: "experiments/mosei_federated/logs/{experiment_name}/{run_id}/client_{client_id}/"
+      model_output_path: "experiments/mosei_federated/models/{experiment_name}/{run_id}/client_{client_id}/mosei_federated_model_{save_metric}.pth"
+      metrics_paths: "experiments/mosei_federated/metrics/{experiment_name}/{run_id}/client_{client_id}/"
     local_batch_size: 128
-    early_stopping: True
-    early_stopping_patience: 5
+    early_stopping: False
+    early_stopping_patience: 10
     early_stopping_metric: "loss"
-
-logging:
-  save_metric: "NonZeroF1_AVL"
-  log_path: "experiments/mosei_federated/logs/{experiment_name}/{run_id}/"
-  model_output_path: "experiments/mosei_federated/models/{experiment_name}/{run_id}/mosei_federated_model_{save_metric}.pth"
-  metrics_paths: "experiments/mosei_federated/metrics/{experiment_name}/{run_id}/"
 
 metrics:
   metrics:

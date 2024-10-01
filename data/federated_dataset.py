@@ -1,6 +1,6 @@
 import numpy as np
 from torch.utils.data import Dataset
-from typing import Any, Callable, Dict, Optional, Union, List, Literal
+from typing import Any, Callable, Dict, Optional, List, Literal
 from scipy.stats import entropy
 
 

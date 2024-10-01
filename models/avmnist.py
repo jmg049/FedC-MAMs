@@ -21,7 +21,6 @@ from models import ConvBlock, ConvBlockArgs
 
 
 class MNISTAudio(Module):
-
     def __init__(
         self,
         conv_block_one_args: ConvBlockArgs,
@@ -63,7 +62,6 @@ class MNISTAudio(Module):
 
 
 class MNISTImage(Module):
-
     def __init__(
         self,
         conv_block_one_one_args: ConvBlockArgs,
@@ -111,7 +109,6 @@ class MNISTImage(Module):
 
 
 class AVMNIST(Module):
-
     NUM_CLASSES = 10
 
     def __init__(
@@ -172,7 +169,6 @@ class AVMNIST(Module):
         is_embd_I: bool = False,
         **kwargs,
     ) -> Tensor:
-
         assert not all((A is None, I is None)), "At least one of A, I must be provided"
         assert not all([is_embd_A, is_embd_I]), "Cannot have all embeddings as True"
 

@@ -1,6 +1,5 @@
 import json
 import os
-from subprocess import Popen
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -28,6 +27,9 @@ class FederatedMultimodalClient:
         fed_config: FederatedClientConfig,
         total_epochs: int,
         run_id: int = -1,
+        model_output_dir: str = "models",
+        metrics_output_dir: str = "metrics",
+        logging_output_dir: str = "logs",
         scheduler: Optional[_LRScheduler] = None,
         train_loader: Optional[DataLoader] = None,
         val_loader: Optional[DataLoader] = None,
@@ -66,6 +68,20 @@ class FederatedMultimodalClient:
         self.best_model_round = 0
         self.run_id = run_id
 
+        self.model_output_dir = model_output_dir.format(
+            run_id=run_id, client_id=client_id, save_metric=fed_config.target_metric
+        )
+        self.metrics_output_dir = metrics_output_dir.format(
+            run_id=run_id, client_id=client_id
+        )
+        self.logging_output_dir = logging_output_dir.format(
+            run_id=run_id, client_id=client_id
+        )
+
+        os.makedirs(self.model_output_dir, exist_ok=True)
+        os.makedirs(self.metrics_output_dir, exist_ok=True)
+        os.makedirs(self.logging_output_dir, exist_ok=True)
+
     def get_model_parameters(self) -> Dict[str, torch.Tensor]:
         return {
             name: param.data.clone() for name, param in self.model.named_parameters()
@@ -79,7 +95,6 @@ class FederatedMultimodalClient:
         return {
             "client_id": self.client_id,
             "current_round": self.current_round,
-            "total_rounds": self.total_rounds,
             "current_epoch": self.current_epoch,
             "total_epochs": self.total_epochs,
             "best_model_path": self.best_model_path,
@@ -111,6 +126,9 @@ class FederatedMultimodalClient:
         )
 
         self.model.load_state_dict(torch.load(self.best_model_path, weights_only=True))
+        self.model.metric_recorder.reset()
+
+        print(f"Loaded best model from {self.best_model_path}")
         self.model.eval()
         for batch in tqdm(dataloader, ascii=True, total=len(dataloader)):
             results = self._evaluate_step(batch)
@@ -128,7 +146,7 @@ class FederatedMultimodalClient:
         print_all_metrics_tables(
             metrics=test_metrics,
             console=None,
-            max_cols_per_row=15,
+            max_cols_per_row=16,
         )
 
         self.print_fn(
@@ -137,9 +155,7 @@ class FederatedMultimodalClient:
 
         with open(
             os.path.join(
-                self.fed_config.output_dir,
-                f"client_{self.client_id}/{self.best_model_round}/",
-                "test_metrics.json",
+                self.metrics_output_dir, f"test_metrics_round_{self.current_round}.json"
             ),
             "w",
         ) as f:
@@ -164,6 +180,7 @@ class FederatedMultimodalClient:
         self.model.metric_recorder.reset()
         epoch_metric_recorder = self.model.metric_recorder.clone()
         for epoch in range(1, self.total_epochs + 1):
+            self.model.metric_recorder.reset()
             epoch_metric_recorder.reset()
             self.current_epoch = epoch
             self.print_fn(
@@ -185,10 +202,11 @@ class FederatedMultimodalClient:
             print_all_metrics_tables(
                 metrics=train_metrics,
                 console=None,
-                max_cols_per_row=15,
+                max_cols_per_row=16,
             )
 
-            epoch_metric_recorder.reset()
+            self.model.metric_recorder.reset()
+            epoch_metric_recorder = self.model.metric_recorder.clone()
 
             if self.lr_scheduler is not None:
                 self.lr_scheduler.step()
@@ -211,16 +229,16 @@ class FederatedMultimodalClient:
 
             val_metrics = epoch_metric_recorder.get_average_metrics(
                 save_to=os.path.join(
-                    self.fed_config.output_dir,
-                    f"client_{self.client_id}/{self.current_round}/",
-                    epoch=self.current_epoch,
-                )
+                    self.metrics_output_dir,
+                    f"{self.current_round}/validation",
+                ),
+                epoch=self.current_epoch,
             )
             self.print_fn("Validation Metrics")
             print_all_metrics_tables(
                 metrics=val_metrics,
                 console=None,
-                max_cols_per_row=15,
+                max_cols_per_row=16,
             )
 
             ## update best model
@@ -230,17 +248,11 @@ class FederatedMultimodalClient:
                     self.best_model_epoch = epoch
                     self.best_model_round = self.current_round
                     self.best_model_path = os.path.join(
-                        self.fed_config.output_dir,
-                        f"client_{self.client_id}/{self.current_round}/",
+                        self.model_output_dir,
+                        str(self.current_round),
                         "best.pth",
                     )
-                    os.makedirs(
-                        os.path.join(
-                            self.fed_config.output_dir,
-                            f"client_{self.client_id}/{self.current_round}/",
-                        ),
-                        exist_ok=True,
-                    )
+                    os.makedirs(os.path.dirname(self.best_model_path), exist_ok=True)
                     torch.save(self.model.state_dict(), self.best_model_path)
             else:
                 if val_metrics[self.fed_config.target_metric] > self.best_model_score:
@@ -248,20 +260,15 @@ class FederatedMultimodalClient:
                     self.best_model_epoch = epoch
                     self.best_model_round = self.current_round
                     self.best_model_path = os.path.join(
-                        self.fed_config.output_dir,
-                        f"client_{self.client_id}/{self.current_round}/",
+                        self.model_output_dir,
+                        str(self.current_round),
                         "best.pth",
                     )
+                    os.makedirs(os.path.dirname(self.best_model_path), exist_ok=True)
                     self.print_fn(
                         f"Best model saved at {self.best_model_path} with score: {self.best_model_score}"
                     )
-                    os.makedirs(
-                        os.path.join(
-                            self.fed_config.output_dir,
-                            f"client_{self.client_id}/{self.current_round}/",
-                        ),
-                        exist_ok=True,
-                    )
+
                     torch.save(self.model.state_dict(), self.best_model_path)
                     self.print_fn(
                         f"Best model saved at {self.best_model_path} with score: {self.best_model_score}"
@@ -271,19 +278,19 @@ class FederatedMultimodalClient:
             f"Training round {self.current_round} completed on Client: {self.client_id}."
         )
 
-        if self.fed_config.do_validation_visualization:
-            _vis_proc = Popen(
-                [
-                    "python",
-                    "visualisation/validation_plotting.py",
-                    "--root_dir",
-                    self.fed_config.output_dir,
-                    f"client_{self.client_id}/{self.current_round}/",
-                    "--save_path",
-                    self.fed_config.output_dir,
-                    f"client_{self.client_id}/{self.current_round}/validation_plots",
-                ]
-            )
+        # if self.fed_config.do_validation_visualization:
+        #     _vis_proc = Popen(
+        #         [
+        #             "python",
+        #             "visualisation/validation_plotting.py",
+        #             "--root_dir",
+        #             self.fed_config.output_dir,
+        #             f"client_{self.client_id}/{self.current_round}/",
+        #             "--save_path",
+        #             self.fed_config.output_dir,
+        #             f"client_{self.client_id}/{self.current_round}/validation_plots",
+        #         ]
+        #     )
 
         if self.test_loader is not None:
             return self.evaluate_round(dataloader=self.test_loader)

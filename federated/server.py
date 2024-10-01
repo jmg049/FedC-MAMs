@@ -1,4 +1,5 @@
 from collections import defaultdict
+import json
 import os
 import numpy as np
 import torch
@@ -11,13 +12,11 @@ from tqdm import tqdm
 from config.federated_config import FederatedConfig
 from federated import FederatedResult
 from federated.client import FederatedMultimodalClient
-from missing_index import missing_pattern
 from models import MultimodalModelProtocol
-from utils import print_all_metrics_tables
+from utils import SafeDict, print_all_metrics_tables
 
 
 class FederatedCongruentServer:
-
     def __init__(
         self,
         model: MultimodalModelProtocol,
@@ -26,6 +25,7 @@ class FederatedCongruentServer:
         global_test_data: DataLoader,
         num_clients: int,
         device: torch.device,
+        config: FederatedConfig,
         aggregation_strategy: Literal["fedavg"] = "fedavg",
         selection_strategy: Literal["all", "random"] = "all",
     ):
@@ -44,6 +44,7 @@ class FederatedCongruentServer:
         self.global_train_data = global_train_data
         self.global_val_data = global_val_data
         self.global_test_data = global_test_data
+        self.config = config
 
     def select_clients(self) -> List[int]:
         # assume all clients are selected for now
@@ -110,15 +111,18 @@ class FederatedCongruentServer:
                 batch=batch, device=self.device, criterion=criterion
             )
             metric_recorder.update_from_dict(eval_results)
-        return metric_recorder.get_average_metrics()
+        return metric_recorder.get_average_metrics(
+            save_to=self.config.server_config.logging_config.metrics_path.format_map(
+                SafeDict(round=str(self.current_round))
+            ),
+            epoch="post_aggregation",
+        )
 
     def train_round(
         self,
         epochs: int,
         optimizer: Optimizer,
         criterion: Module,
-        batch_size: int,
-        config: FederatedConfig,
         clients: List[FederatedMultimodalClient],
         *,
         print_fn: callable = print,
@@ -130,9 +134,9 @@ class FederatedCongruentServer:
         best_metrics = defaultdict(lambda: 0.0)
         best_eval_loss = 1e10
 
-        # missing_rate = config.training.missing_rates
+        # missing_rate = self.config.training.missing_rates
         # mp = missing_pattern(
-        #     config.training.num_modalities,
+        #     self.config.training.num_modalities,
         #     len(self.global_train_data.dataset),
         #     missing_rate,
         # )
@@ -169,7 +173,7 @@ class FederatedCongruentServer:
             print_all_metrics_tables(
                 metrics=global_train_metrics,
                 console=None,
-                max_cols_per_row=15,
+                max_cols_per_row=16,
                 max_width=20,
             )
 
@@ -197,45 +201,68 @@ class FederatedCongruentServer:
                 tqdm.write(str(validation_cm))
                 del epoch_metric_recorder.results["ConfusionMatrix"]
 
-            validation_metrics = epoch_metric_recorder.get_average_metrics()
+            validation_metrics = epoch_metric_recorder.get_average_metrics(
+                save_to=self.config.server_config.logging_config.metrics_path.format_map(
+                    SafeDict(round=str(self.current_round))
+                ),
+                epoch="pre_aggregation",
+            )
             print_fn("Global model validation metrics")
             print_all_metrics_tables(
                 metrics=validation_metrics,
                 console=None,
-                max_cols_per_row=15,
+                max_cols_per_row=16,
                 max_width=20,
             )
 
             model_state_dict = self.global_model.state_dict()
             os.makedirs(
-                os.path.dirname(config.logging.model_output_path), exist_ok=True
+                os.path.dirname(
+                    self.config.server_config.logging_config.model_output_path.format_map(
+                        SafeDict(round=str(self.current_round))
+                    )
+                ),
+                exist_ok=True,
             )
             torch.save(
                 model_state_dict,
-                config.logging.model_output_path.replace(".pth", f"_{epoch}.pth"),
+                self.config.server_config.logging_config.model_output_path.format_map(
+                    SafeDict(round=str(self.current_round))
+                ).replace(".pth", f"_{epoch}.pth"),
             )
-            print_fn(
-                f"Epoch {epoch} saved at {config.logging.model_output_path.replace('.pth', f'_{epoch}.pth')}"
-            )
+
+            p = self.config.server_config.logging_config.model_output_path.format_map(
+                SafeDict(round=str(self.current_round))
+            ).replace(".pth", f"_{epoch}.pth")
+
+            print_fn(f"Epoch {epoch} saved at {p}")
             # EARLY STOPPING - Based on the target metric
-            if config.server_config.early_stopping:
+            if self.config.server_config.early_stopping:
                 patience = (
-                    config.server_config.early_stopping_patience
+                    self.config.server_config.early_stopping_patience
                 )  # Number of epochs to wait for improvement
-                min_delta = config.server_config.early_stopping_min_delta
+                min_delta = self.config.server_config.early_stopping_min_delta
                 # Determine whether we are minimizing or maximizing the metric
-                if config.logging.save_metric == "loss":
+                if self.config.server_config.logging_config.save_metric == "loss":
                     improvement = (
-                        best_metrics[config.logging.save_metric]
-                        - validation_metrics[config.logging.save_metric]
+                        best_metrics[
+                            self.config.server_config.logging_config.save_metric
+                        ]
+                        - validation_metrics[
+                            self.config.server_config.logging_config.save_metric
+                        ]
                     )
                     print_fn(
-                        f"Improvement: {improvement}, Best: {best_metrics[config.logging.save_metric]}, Current: {validation_metrics[config.logging.save_metric]}"
+                        f"Improvement: {improvement}, Best: {best_metrics[self.config.server_config.logging_config.save_metric]}, Current: {validation_metrics[self.config.server_config.logging_config.save_metric]}"
                     )
                 else:
                     improvement = (
-                        validation_metrics[config.logging.save_metric]
-                        - best_metrics[config.logging.save_metric]
+                        validation_metrics[
+                            self.config.server_config.logging_config.save_metric
+                        ]
+                        - best_metrics[
+                            self.config.server_config.logging_config.save_metric
+                        ]
                     )  # Improvement means increase
 
                 if epoch > patience:
@@ -247,28 +274,35 @@ class FederatedCongruentServer:
 
                         break
 
-            if config.logging.save_metric == "loss":
+            if self.config.server_config.logging_config.save_metric == "loss":
                 if validation_metrics["loss"] < best_eval_loss:
                     print_fn(f"New best model found at epoch {epoch}")
                     best_eval_epoch = epoch
                     best_eval_loss = validation_metrics["loss"]
                     best_metrics = validation_metrics
             else:
-                target_metric = validation_metrics[config.logging.save_metric]
-                if target_metric > best_metrics[config.logging.save_metric]:
+                target_metric = validation_metrics[
+                    self.config.server_config.logging_config.save_metric
+                ]
+                if (
+                    target_metric
+                    > best_metrics[self.config.server_config.logging_config.save_metric]
+                ):
                     print_fn(f"New best model found at epoch {epoch}")
                     best_eval_epoch = epoch
                     best_metrics = validation_metrics
 
         print_fn(
-            f"Best eval epoch was {best_eval_epoch} with a {config.logging.save_metric} of {best_metrics[config.logging.save_metric]}"
+            f"Best eval epoch was {best_eval_epoch} with a {self.config.server_config.logging_config.save_metric} of {best_metrics[self.config.server_config.logging_config.save_metric]}"
         )
 
         print_fn("Global Model Training complete: Round: ", self.current_round)
 
         ## load the best model
         model_state_dict = torch.load(
-            config.logging.model_output_path.replace(".pth", f"_{best_eval_epoch}.pth"),
+            self.config.server_config.logging_config.model_output_path.format_map(
+                SafeDict(round=str(self.current_round))
+            ).replace(".pth", f"_{best_eval_epoch}.pth"),
             weights_only=True,
         )
 
@@ -287,7 +321,9 @@ class FederatedCongruentServer:
         aggregated_params = self.aggregate_models(client_results)
         self.update_global_model(aggregated_params)
 
-        eval_results = self.evaluate_global_model()
+        eval_results = self.evaluate_global_model(
+            data=self.global_test_data, criterion=criterion
+        )
 
         return {
             "round": self.current_round,
@@ -302,8 +338,6 @@ class FederatedCongruentServer:
         epochs: int,
         optimizer: Optimizer,
         criterion: Module,
-        batch_size: int,
-        config: FederatedConfig,
         print_fn: callable = print,
     ):
         best_global_performance = None
@@ -317,8 +351,6 @@ class FederatedCongruentServer:
                 epochs=epochs,
                 optimizer=optimizer,
                 criterion=criterion,
-                batch_size=batch_size,
-                config=config,
                 clients=clients,
                 print_fn=print_fn,
             )
@@ -328,32 +360,68 @@ class FederatedCongruentServer:
             print_all_metrics_tables(
                 metrics=global_performance,
                 console=None,
-                max_cols_per_row=15,
+                max_cols_per_row=16,
                 max_width=20,
             )
+
+            os.makedirs(
+                self.config.server_config.logging_config.metrics_path.format_map(
+                    SafeDict(round=str(self.current_round))
+                ),
+                exist_ok=True,
+            )
+
+            with open(
+                os.path.join(
+                    self.config.server_config.logging_config.metrics_path.format_map(
+                        SafeDict(round=str(self.current_round))
+                    ),
+                    f"round_{round}_best_metrics.json",
+                ),
+                "w",
+            ) as f:
+                json_str = json.dumps(global_performance, indent=4)
+                f.write(json_str)
 
             # Check if this round's performance is the best so far
             if (
                 best_global_performance is None
-                or global_performance[config.logging.save_metric]
-                > best_global_performance[config.logging.save_metric]
+                or global_performance[
+                    self.config.server_config.logging_config.save_metric
+                ]
+                > best_global_performance[
+                    self.config.server_config.logging_config.save_metric
+                ]
             ):
                 best_global_performance = global_performance
                 best_global_model_state = self.global_model.state_dict()
                 best_round = round
 
+                os.makedirs(
+                    os.path.dirname(
+                        self.config.server_config.logging_config.model_output_path.format_map(
+                            SafeDict(round=str(self.current_round))
+                        )
+                    ),
+                    exist_ok=True,
+                )
                 # Save the best model
                 torch.save(
                     best_global_model_state,
-                    config.logging.model_output_path.replace(".pth", "_best.pth"),
+                    self.config.server_config.logging_config.model_output_path.format_map(
+                        SafeDict(round=str(self.current_round))
+                    ).replace(".pth", "_best.pth"),
                 )
                 print_fn(f"New best model saved at round {round}")
 
             # Early stopping check
-            if config.server_config.early_stopping:
-                if round - best_round >= config.server_config.early_stopping_patience:
+            if self.config.server_config.early_stopping:
+                if (
+                    round - best_round
+                    >= self.config.server_config.early_stopping_patience
+                ):
                     print_fn(
-                        f"Early stopping triggered. No improvement for {config.server_config.early_stopping_patience} rounds."
+                        f"Early stopping triggered. No improvement for {self.config.server_config.early_stopping_patience} rounds."
                     )
                     break
 
@@ -367,7 +435,7 @@ class FederatedCongruentServer:
         print_all_metrics_tables(
             metrics=final_test_results,
             console=None,
-            max_cols_per_row=15,
+            max_cols_per_row=16,
             max_width=20,
         )
 

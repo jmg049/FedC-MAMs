@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import json
 from typing import Any, Dict
 import torch
 from pprint import pformat
@@ -38,3 +39,15 @@ class FederatedResult:
             metrics=data["metrics"],
             metadata=data.get("metadata", {}),
         )
+
+    def as_json(self):
+        client_info_str = json.dumps(self.client_info, indent=4)
+        metrics_str = json.dumps(self.metrics, indent=4)
+        metadata_str = json.dumps(self.metadata, indent=4)
+
+        return {
+            "client_info": client_info_str,
+            "model_params": sum(p.numel() for p in self.model_params.values()),
+            "metrics": metrics_str,
+            "metadata": metadata_str,
+        }

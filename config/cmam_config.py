@@ -53,6 +53,38 @@ class CMAMModelConfig(BaseConfig):
 
 
 @dataclass(kw_only=True)
+class DualCMAMModelConfig(BaseConfig):
+    """Configuration for the CMAM model."""
+
+    name: str
+    input_encoder_info: Dict[Modality, Dict[str, Any]]
+    decoder_hidden_size: int
+    shared_encoder_output_size: int
+    target_modality_one_embd_size: int
+    target_modality_two_embd_size: int
+    input_modality: Modality
+    target_modality_one: Modality
+    target_modality_two: Modality
+    attention_heads: int = 2
+    dropout: float = 0.0
+    grad_clip: float = 0.0
+
+    def __dict__(self):
+        return {
+            "input_modality": self.input_modality,
+            "target_modality_one": self.target_modality_one,
+            "target_modality_two": self.target_modality_two,
+            "decoder_hidden_size": self.decoder_hidden_size,
+            "shared_encoder_output_size": self.shared_encoder_output_size,
+            "target_modality_one_embd_size": self.target_modality_one_embd_size,
+            "target_modality_two_embd_size": self.target_modality_two_embd_size,
+            "attention_heads": self.attention_heads,
+            "dropout": self.dropout,
+            "grad_clip": self.grad_clip,
+        }
+
+
+@dataclass(kw_only=True)
 class CMAMTrainingConfig(BaseConfig):
     """Configuration for training a CMAM model."""
 
@@ -79,7 +111,7 @@ class CMAMTrainingConfig(BaseConfig):
 @dataclass(kw_only=True)
 class CMAMConfig(Config):
     training: CMAMTrainingConfig
-    cmam: CMAMModelConfig
+    cmam: CMAMModelConfig | DualCMAMModelConfig
     prediction_metrics: MetricsConfig
     rec_metrics: MetricsConfig
 
@@ -108,7 +140,10 @@ class CMAMConfig(Config):
         cmam_training_config = CMAMTrainingConfig.from_dict(cmam_training_config)
 
         cmam_model_config = data["cmam"]
-        cmam_model_config = CMAMModelConfig.from_dict(cmam_model_config)
+        if cmam_model_config["name"].lower() == "basiccmam":
+            cmam_model_config = CMAMModelConfig.from_dict(cmam_model_config)
+        else:
+            cmam_model_config = DualCMAMModelConfig.from_dict(cmam_model_config)
 
         prediction_metrics = data["metrics"]["prediction_metrics"]
         rec_metrics = data["metrics"].get("rec_metrics", {})

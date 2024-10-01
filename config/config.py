@@ -11,9 +11,11 @@ import logging
 from cmam_loss import CMAMLoss
 from models import ConvBlockArgs
 from models.avmnist import AVMNIST, MNISTAudio, MNISTImage
-from models.cmams import BasicCMAM
+from models.cmams import BasicCMAM, DualCMAM
 from models.utt_fusion_model import UttFusionModel
 from modalities import Modality
+
+from utils import SafeDict
 
 LOGGER = logging.getLogger("rich")
 
@@ -156,7 +158,6 @@ class ModelConfig(BaseConfig):
     kwargs: Dict[str, Any] = field(default_factory=dict)
 
     def from_dict(data: dict):
-
         name = data["name"]
         pretrained_path = data.get("pretrained_path", None)
         kwargs = {
@@ -185,20 +186,29 @@ class LoggingConfig(BaseConfig):
     def from_dict(cls, data: dict, run_id: str, experiment_name: str):
         """Create LoggingConfig from a dictionary with formatted paths."""
         log_path = Path(
-            data["log_path"].format(experiment_name=experiment_name, run_id=run_id)
+            data["log_path"].format_map(
+                SafeDict(experiment_name=experiment_name, run_id=run_id)
+            )
         )
         model_output_path = Path(
-            data["model_output_path"].format(
-                experiment_name=experiment_name,
-                run_id=run_id,
-                save_metric=data["save_metric"],
+            data["model_output_path"].format_map(
+                SafeDict(
+                    experiment_name=experiment_name,
+                    run_id=run_id,
+                    save_metric=data["save_metric"],
+                )
             )
         )
         print(f"MOP: {model_output_path}")
         print(f"Run ID: {run_id}")
         print(f"metriccs {data['metrics_paths']}")
         metrics_path = Path(
-            data["metrics_paths"].format(experiment_name=experiment_name, run_id=run_id)
+            data["metrics_paths"].format_map(
+                SafeDict(
+                    experiment_name=experiment_name,
+                    run_id=run_id,
+                )
+            )
         )
         print(f"metrics path: {metrics_path}")
 
@@ -345,5 +355,7 @@ def resolve_model_name(model_name: str):
             return AVMNIST
         case "basiccmam":
             return BasicCMAM
+        case "dualcmam":
+            return DualCMAM
         case _:
             raise ValueError(f"Invalid model: {model_name}")

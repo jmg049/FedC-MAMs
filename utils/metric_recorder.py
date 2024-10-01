@@ -9,7 +9,8 @@ from logging import getLogger
 
 from collections import OrderedDict
 
-logger = getLogger("cmams")
+logger = getLogger(__name__)
+logger.setLevel("INFO")
 
 
 class MetricRecorder:
@@ -103,9 +104,9 @@ class MetricRecorder:
                 elif isinstance(values, (int, float)):
                     results[metric] = values
                 else:
-                    logger.warning(
-                        f"Skipping metric '{metric}': unexpected type {type(values)}"
-                    )
+                    # msg = f"Skipping metric '{metric}': unexpected type {type(values)} {len(values) if isinstance(values, (list, tuple)) else ''}"
+                    # logger.warning(msg)
+                    continue
             except Exception as e:
                 logger.exception(f"Error processing metric '{metric}': {str(e)}")
                 raise Exception(f"Error processing metric '{metric}': {str(e)}")
