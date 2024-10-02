@@ -152,13 +152,13 @@ class AVMNIST(Module):
         if isinstance(modality, str):
             modality = Modality.from_str(modality)
 
-            match modality:
-                case Modality.AUDIO:
-                    return self.audio_encoder
-                case Modality.IMAGE:
-                    return self.image_encoder
-                case _:
-                    raise ValueError(f"Unknown modality: {modality}")
+        match modality:
+            case Modality.AUDIO:
+                return self.audio_encoder
+            case Modality.IMAGE:
+                return self.image_encoder
+            case _:
+                raise ValueError(f"Unknown modality: {modality}")
 
     def flatten_parameters(self):
         pass

@@ -1,19 +1,21 @@
 import argparse
 import json
+import os
 
 import torch
 from modalities import add_modality
 from rich.console import Console
 
-from config import FederatedConfig, resolve_model_name
+from config import resolve_model_name
+from config.federated_cmam_config import FederatedCMAMConfig
 from data import (
     create_federated_dataloaders,
     create_federated_datasets,
 )
-from federated.client import FederatedMultimodalClient
-from federated.server import FederatedCongruentServer
+from federated.cmam_client import FederatedCMAMClient
+from federated.cmam_server import FederatedCongruentCMAMServer
 from models import MultimodalModelProtocol, check_protocol_compliance
-from utils import print_all_metrics_tables
+from utils import SafeDict, print_all_metrics_tables
 from utils.logger import get_logger
 from utils.metric_recorder import MetricRecorder
 
@@ -24,8 +26,11 @@ console = Console()
 
 def main(config_path: str, run_id: int = -1):
     # Load configuration
-    config = FederatedConfig.load(config_path, run_id=run_id)
-
+    config = FederatedCMAMConfig.load(config_path, run_id=run_id)
+    console.print(
+        config,
+        style="bold green",
+    )
     # Set up logging
     server_logger = get_logger(config.server_config.logging_config.log_path)
     server_logger.info(f"Loaded configuration from {config_path}")
@@ -34,6 +39,38 @@ def main(config_path: str, run_id: int = -1):
     device = torch.device(config.experiment.device)
 
     num_clients = config.server_config.num_clients
+
+
+    global_model_cls = resolve_model_name(
+        config.server_config.global_model_config["name"]
+    )
+
+    metric_recorder = MetricRecorder(config.metrics)
+
+    global_model = global_model_cls(
+        **config.server_config.global_model_config.kwargs,
+        metric_recorder=metric_recorder,
+    )
+    global_model.to(device)
+    check_protocol_compliance(global_model, MultimodalModelProtocol)
+    console.print(global_model)
+    cmam_configs = config.server_config.cmam_model_configs
+    
+    if isinstance(cmam_configs, list):
+        raise NotImplementedError("Multiple CMAM models not supported yet")
+    else:
+        global_cmam_cls = resolve_model_name(config.server_config.cmam_model_configs.name)
+        
+    global_cmam = global_cmam_cls(
+        input_encoder_info=config.server_config.cmam_model_configs.input_encoder_info,
+        metric_recorder=metric_recorder,
+        **config.server_config.cmam_model_configs.__dict__()
+    )   
+    
+
+    global_optimizer = config._get_optimizer(global_cmam, is_global=True)
+    global_criterion = config._get_criterion(is_global=True)
+    
 
     ## create all dataloaders
     (
@@ -59,6 +96,30 @@ def main(config_path: str, run_id: int = -1):
             print_all_metrics_tables(
                 metrics, max_cols_per_row=10, max_width=20, console=console
             )
+    if config.data_config.distribution_type == "non_iid":
+        iid_metrics_output_path = os.path.join(
+            config.server_config.logging_config.metrics_path.format_map(
+                SafeDict(
+                    run_id=config.experiment.run_id,
+                    alpha=f"_{config.data_config.alpha}",
+                    round="",
+                )
+            ),
+            "iid_metrics.json",
+        )
+    else:
+        iid_metrics_output_path = os.path.join(
+            config.server_config.logging_config.metrics_path.format_map(
+                SafeDict(run_id=config.experiment.run_id, round="")
+            ),
+            "iid_metrics.json",
+        )
+    os.makedirs(os.path.dirname(iid_metrics_output_path), exist_ok=True)
+    ## write the iid metrics to a file under the metrics path
+    with open(iid_metrics_output_path, "w") as f:
+        json_str = json.dumps(iid_metrics, indent=4)
+        f.write(json_str)
+    console.print(f"IID Metrics saved to {iid_metrics_output_path}")
 
     federated_dataloaders = create_federated_dataloaders(
         {
@@ -73,21 +134,12 @@ def main(config_path: str, run_id: int = -1):
     global_val_loader = federated_dataloaders["validation"]["global"]
     global_test_loader = federated_dataloaders["test"]["global"]
 
-    global_model_cls = resolve_model_name(
-        config.server_config.global_model_config["name"]
-    )
-    global_model = global_model_cls(**config.server_config.global_model_config.kwargs)
-    global_model.to(device)
-    check_protocol_compliance(global_model, MultimodalModelProtocol)
 
-    global_model.set_metric_recorder(metric_recorder=MetricRecorder(config.metrics))
-
-    global_optimizer = config._get_optimizer(global_model, is_global=True)
-    global_criterion = config._get_criterion(is_global=True)
 
     # Initialize server
-    server = FederatedCongruentServer(
+    server = FederatedCongruentCMAMServer(
         model=global_model,
+        cmam=global_cmam,
         global_train_data=global_train_loader,
         global_val_data=global_val_loader,
         global_test_data=global_test_loader,
@@ -105,19 +157,28 @@ def main(config_path: str, run_id: int = -1):
         client_config = config.get_client_config()
 
         # Initialize client model
-        client_model = global_model_cls(**config.client_config.model_config.kwargs)
+        client_model = global_model_cls(
+            **config.client_config.model_config.kwargs,
+            metric_recorder=metric_recorder.clone(),
+        )
         client_model.to(device)
+        
+        client_cmam = global_cmam_cls(
+            input_encoder_info=config.client_config.cmam_config.input_encoder_info,
+            metric_recorder=metric_recorder.clone(),
+            **config.client_config.cmam_config.__dict__()
+        )
 
-        optimizer = config._get_optimizer(client_model, is_global=False)
+        optimizer = config._get_optimizer(client_cmam, is_global=False)
         criterion = config._get_criterion(is_global=False)
 
         client_train_loader = federated_dataloaders["train"]["clients"][client_id]
         client_val_loader = federated_dataloaders["validation"]["clients"][client_id]
         client_test_loader = federated_dataloaders["test"]["clients"][client_id]
-        client_model.set_metric_recorder(metric_recorder=MetricRecorder(config.metrics))
-        client = FederatedMultimodalClient(
+        client = FederatedCMAMClient(
             client_id=client_id,
             model=client_model,
+            cmam=client_cmam,
             optimizer=optimizer,
             criterion=criterion,
             device=device,
@@ -146,6 +207,9 @@ def main(config_path: str, run_id: int = -1):
     # Print final results
     server_logger.info("Federated Learning completed")
     print_all_metrics_tables(results["final_test_results"], console=console)
+
+    console.print(f"Best Round: {results["best_round"]}")
+    console.print(f"Best Global Performance:\n{results["best_global_performance"]}")
 
     # Save results
     with open(config.server_config.logging_config.metrics_path, "w") as f:

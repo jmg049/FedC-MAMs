@@ -141,15 +141,44 @@ class FederatedConfig(Config):
         server_config = federated_config["server_config"]
         client_config = federated_config["client_config"]
 
-        server_config.logging_config[
-            "model_output_path"
-        ] = server_config.logging_config["model_output_path"].format_map(
-            SafeDict(
-                save_metric=server_config.logging_config["save_metric"],
-                experiment_name=experiment_config.name,
-                run_id=experiment_config.run_id,
+        if data_config.distribution_type == "iid":
+
+            server_config.logging_config[
+                "model_output_path"
+            ] = server_config.logging_config["model_output_path"].format_map(
+                SafeDict(
+                    save_metric=server_config.logging_config["save_metric"],
+                    experiment_name=experiment_config.name,
+                    run_id=experiment_config.run_id,
+                )
             )
-        )
+        else:
+            server_config.logging_config[
+                "model_output_path"
+            ] = server_config.logging_config["model_output_path"].format_map(
+                SafeDict(
+                    save_metric=server_config.logging_config["save_metric"],
+                    experiment_name=experiment_config.name,
+                    run_id=experiment_config.run_id,
+                    alpha=f"_{data_config.alpha}",
+                )
+            )
+            server_config.logging_config["metrics_paths"].format_map(
+                SafeDict(
+                    save_metric=server_config.logging_config["save_metric"],
+                    experiment_name=experiment_config.name,
+                    run_id=experiment_config.run_id,
+                    alpha=f"_{data_config.alpha}",
+                )
+            )
+            server_config.logging_config["log_path"].format_map(
+                SafeDict(
+                    save_metric=server_config.logging_config["save_metric"],
+                    experiment_name=experiment_config.name,
+                    run_id=experiment_config.run_id,
+                    alpha=f"_{data_config.alpha}",
+                )
+            )
 
         server_config.logging_config = LoggingConfig.from_dict(
             server_config.logging_config,
@@ -157,15 +186,49 @@ class FederatedConfig(Config):
             run_id=experiment_config.run_id,
         )
 
-        client_config.logging["model_output_path"] = client_config.logging[
-            "model_output_path"
-        ].format_map(
-            SafeDict(
-                save_metric=client_config.logging["save_metric"],
-                experiment_name=experiment_config.name,
-                run_id=experiment_config.run_id,
+        if data_config.distribution_type == "iid":
+            client_config.logging["model_output_path"] = client_config.logging[
+                "model_output_path"
+            ].format_map(
+                SafeDict(
+                    save_metric=client_config.logging["save_metric"],
+                    experiment_name=experiment_config.name,
+                    run_id=experiment_config.run_id,
+                )
             )
-        )
+        else:
+            client_config.logging["model_output_path"] = client_config.logging[
+                "model_output_path"
+            ].format_map(
+                SafeDict(
+                    save_metric=client_config.logging["save_metric"],
+                    experiment_name=experiment_config.name,
+                    run_id=experiment_config.run_id,
+                    alpha=f"_{data_config.alpha}",
+                )
+            )
+
+            client_config.logging["metrics_paths"] = client_config.logging[
+                "metrics_paths"
+            ].format_map(
+                SafeDict(
+                    save_metric=client_config.logging["save_metric"],
+                    experiment_name=experiment_config.name,
+                    run_id=experiment_config.run_id,
+                    alpha=f"_{data_config.alpha}",
+                )
+            )
+
+            client_config.logging["log_path"] = client_config.logging[
+                "log_path"
+            ].format_map(
+                SafeDict(
+                    save_metric=client_config.logging["save_metric"],
+                    experiment_name=experiment_config.name,
+                    run_id=experiment_config.run_id,
+                    alpha=f"_{data_config.alpha}",
+                )
+            )
 
         client_config.logging = LoggingConfig.from_dict(
             client_config.logging,
@@ -174,6 +237,7 @@ class FederatedConfig(Config):
         )
 
         metrics_config = data["metrics"]
+
         metrics_config = MetricsConfig.from_dict(metrics_config)
 
         return cls(

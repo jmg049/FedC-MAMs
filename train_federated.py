@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 
 import torch
 from modalities import add_modality
@@ -13,7 +14,7 @@ from data import (
 from federated.client import FederatedMultimodalClient
 from federated.server import FederatedCongruentServer
 from models import MultimodalModelProtocol, check_protocol_compliance
-from utils import print_all_metrics_tables
+from utils import SafeDict, print_all_metrics_tables
 from utils.logger import get_logger
 from utils.metric_recorder import MetricRecorder
 
@@ -25,7 +26,10 @@ console = Console()
 def main(config_path: str, run_id: int = -1):
     # Load configuration
     config = FederatedConfig.load(config_path, run_id=run_id)
-
+    console.print(
+        config,
+        style="bold green",
+    )
     # Set up logging
     server_logger = get_logger(config.server_config.logging_config.log_path)
     server_logger.info(f"Loaded configuration from {config_path}")
@@ -59,6 +63,30 @@ def main(config_path: str, run_id: int = -1):
             print_all_metrics_tables(
                 metrics, max_cols_per_row=10, max_width=20, console=console
             )
+    if config.data_config.distribution_type == "non_iid":
+        iid_metrics_output_path = os.path.join(
+            config.server_config.logging_config.metrics_path.format_map(
+                SafeDict(
+                    run_id=config.experiment.run_id,
+                    alpha=f"_{config.data_config.alpha}",
+                    round="",
+                )
+            ),
+            "iid_metrics.json",
+        )
+    else:
+        iid_metrics_output_path = os.path.join(
+            config.server_config.logging_config.metrics_path.format_map(
+                SafeDict(run_id=config.experiment.run_id, round="")
+            ),
+            "iid_metrics.json",
+        )
+    os.makedirs(os.path.dirname(iid_metrics_output_path), exist_ok=True)
+    ## write the iid metrics to a file under the metrics path
+    with open(iid_metrics_output_path, "w") as f:
+        json_str = json.dumps(iid_metrics, indent=4)
+        f.write(json_str)
+    console.print(f"IID Metrics saved to {iid_metrics_output_path}")
 
     federated_dataloaders = create_federated_dataloaders(
         {
@@ -76,13 +104,15 @@ def main(config_path: str, run_id: int = -1):
     global_model_cls = resolve_model_name(
         config.server_config.global_model_config["name"]
     )
-    
+
     metric_recorder = MetricRecorder(config.metrics)
-    
-    global_model = global_model_cls(**config.server_config.global_model_config.kwargs, metric_recorder=metric_recorder)
+
+    global_model = global_model_cls(
+        **config.server_config.global_model_config.kwargs,
+        metric_recorder=metric_recorder,
+    )
     global_model.to(device)
     check_protocol_compliance(global_model, MultimodalModelProtocol)
-
 
     global_optimizer = config._get_optimizer(global_model, is_global=True)
     global_criterion = config._get_criterion(is_global=True)
@@ -107,7 +137,10 @@ def main(config_path: str, run_id: int = -1):
         client_config = config.get_client_config()
 
         # Initialize client model
-        client_model = global_model_cls(**config.client_config.model_config.kwargs, metric_recorder=metric_recorder.clone())
+        client_model = global_model_cls(
+            **config.client_config.model_config.kwargs,
+            metric_recorder=metric_recorder.clone(),
+        )
         client_model.to(device)
 
         optimizer = config._get_optimizer(client_model, is_global=False)
@@ -147,8 +180,7 @@ def main(config_path: str, run_id: int = -1):
     # Print final results
     server_logger.info("Federated Learning completed")
     print_all_metrics_tables(results["final_test_results"], console=console)
-    
-    
+
     console.print(f"Best Round: {results["best_round"]}")
     console.print(f"Best Global Performance:\n{results["best_global_performance"]}")
 

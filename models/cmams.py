@@ -1,24 +1,24 @@
 from typing import Any, Dict, Union
+
 import numpy as np
 import torch
+from modalities import Modality
 from torch.nn import (
-    Parameter,
-    Module,
+    BatchNorm1d,
+    Dropout,
+    Identity,
     Linear,
+    Module,
+    ModuleDict,
+    ModuleList,
+    MultiheadAttention,
+    Parameter,
     ReLU,
     Sequential,
-    Dropout,
-    BatchNorm1d,
-    Identity,
-    ModuleDict,
-    MultiheadAttention,
-    ModuleList,
 )
 
 from cmam_loss import CMAMLoss
-from models import resolve_encoder
-from modalities import Modality
-
+from models import MultimodalModelProtocol, resolve_encoder
 from utils.metric_recorder import MetricRecorder
 
 
@@ -26,7 +26,7 @@ class BasicCMAM(Module):
     def __init__(
         self,
         input_encoder_info: Dict[Modality, Dict[str, Any]],
-        target_modality: Modality,
+        target_modality: Modality | str,
         assoc_net_input_size: int,
         assoc_net_hidden_size: int,
         assoc_net_output_size: int,
@@ -82,6 +82,11 @@ class BasicCMAM(Module):
         self.assoc_net.to(device)
         return self
 
+    def flatten_parameters(self):
+        for encoder in self.encoders.values():
+            if hasattr(encoder, "flatten_parameters"):
+                encoder.flatten_parameters()
+
     def reset_metric_recorders(self):
         self.metric_recorder.reset()
 
@@ -109,12 +114,13 @@ class BasicCMAM(Module):
         cmam_criterion: CMAMLoss,
         optimizer: torch.optim.Optimizer,
         device: torch.device,
-        trained_model: Module,
+        trained_model: MultimodalModelProtocol,
     ):
         self.train()
-        target_modality = batch[self.target_modality]
+        target_modality = batch[str(self.target_modality)[0].upper()].float().to(device)
         input_modalities = {
-            modality: batch[modality].float().to(device) for modality in self.encoders
+            modality: batch[str(modality)[0].upper()].float().to(device)
+            for modality in self.encoders
         }
 
         mi_input_modalities = [v.clone() for k, v in input_modalities.items()]
@@ -123,6 +129,7 @@ class BasicCMAM(Module):
 
         # Get the target embedding without computing gradients
         with torch.no_grad():
+            trained_model.to(device)
             trained_model.eval()
             trained_encoder = trained_model.get_encoder(self.target_modality)
             target_embd = trained_encoder(target_modality.to(device))
@@ -141,7 +148,8 @@ class BasicCMAM(Module):
 
         # Prepare input for the pretrained model
         encoder_data = {
-            str(k)[0]: batch[k].to(device=device) for k in self.encoders.keys()
+            str(k)[0]: batch[str(k)[0].upper()].to(device=device)
+            for k in self.encoders.keys()
         }
         m_kwargs = {
             **encoder_data,
@@ -193,9 +201,11 @@ class BasicCMAM(Module):
         self.eval()
         trained_model.eval()
         with torch.no_grad():
-            target_modality = batch[self.target_modality]
+            target_modality = (
+                batch[str(self.target_modality)[0].upper()].float().to(device)
+            )
             input_modalities = {
-                modality: batch[modality].float().to(device)
+                modality: batch[str(modality)[0].upper()].float().to(device)
                 for modality in self.encoders
             }
             mi_input_modalities = [v.clone() for k, v in input_modalities.items()]
@@ -206,14 +216,15 @@ class BasicCMAM(Module):
             labels = labels.to(device)
 
             ## get the target
+            trained_model.to(device)
             target_modality = target_modality.to(device)
-
             trained_encoder = trained_model.get_encoder(self.target_modality)
             target_embd = trained_encoder(target_modality)
             rec_embd = self.forward(input_modalities)
 
             encoder_data = {
-                str(k)[0]: batch[k].to(device=device) for k in self.encoders.keys()
+                str(k)[0]: batch[str(k)[0].upper()].to(device=device)
+                for k in self.encoders.keys()
             }
             m_kwargs = {
                 **encoder_data,

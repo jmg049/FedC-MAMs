@@ -1,4 +1,5 @@
 from collections import defaultdict
+from copy import deepcopy
 import json
 import os
 import numpy as np
@@ -9,14 +10,14 @@ from torch.utils.data import DataLoader
 from typing import Any, List, Dict, Literal
 
 from tqdm import tqdm
-from config.federated_config import FederatedConfig
+from config.federated_cmam_config import FederatedCMAMConfig
 from federated import FederatedResult
 from federated.client import FederatedMultimodalClient
 from models import CMAMProtocol, MultimodalModelProtocol
 from utils import SafeDict, print_all_metrics_tables
 
 
-class FederatedCongruentServer:
+class FederatedCongruentCMAMServer:
     def __init__(
         self,
         model: MultimodalModelProtocol,
@@ -53,7 +54,7 @@ class FederatedCongruentServer:
         return list(range(self.num_clients))
 
     def distribute_model(self) -> Dict[str, torch.Tensor]:
-        return self.global_model.state_dict()
+        return deepcopy(self.global_cmam.state_dict())
 
     def fed_avg(self, client_results: List[FederatedResult]) -> Dict[str, torch.Tensor]:
         """
@@ -106,15 +107,15 @@ class FederatedCongruentServer:
                 )
 
     def update_global_model(self, aggregated_params: Dict[str, torch.Tensor]):
-        self.global_model.load_state_dict(aggregated_params)
+        self.global_cmam.load_state_dict(aggregated_params)
 
     def evaluate_global_model(
         self, data: DataLoader, criterion: Module
     ) -> Dict[str, Any]:
-        self.global_model.metric_recorder.reset()
-        metric_recorder = self.global_model.metric_recorder.clone()
+        self.global_cmam.metric_recorder.reset()
+        metric_recorder = self.global_cmam.metric_recorder.clone()
         for batch in tqdm(data, desc="Evaluating global model", ascii=True):
-            eval_results = self.global_model.evaluate(
+            eval_results = self.global_cmam.evaluate(
                 batch=batch, device=self.device, criterion=criterion
             )
             metric_recorder.update_from_dict(eval_results)
@@ -148,11 +149,15 @@ class FederatedCongruentServer:
         #     missing_rate,
         # )
 
+        self.global_cmam.to(self.device)
+        self.global_cmam.train()
+        self.global_model.to(self.device)
+        self.global_model.eval()
         for epoch in tqdm(
             range(1, epochs + 1), desc="Global model training", ascii=True, total=epochs
         ):
-            self.global_model.metric_recorder.reset()
-            epoch_metric_recorder = self.global_model.metric_recorder.clone()
+            self.global_cmam.metric_recorder.reset()
+            epoch_metric_recorder = self.global_cmam.metric_recorder.clone()
 
             for i, batch in tqdm(
                 enumerate(self.global_train_data),
@@ -162,11 +167,13 @@ class FederatedCongruentServer:
             ):
                 # batch["missing_index"] = mp[batch_size * i : batch_size * (i + 1), :]
 
-                train_results = self.global_model.train_step(
+                train_results = self.global_cmam.train_step(
                     batch=batch,
+                    labels=batch["label"],
                     optimizer=optimizer,
-                    criterion=criterion,
+                    cmam_criterion=criterion,
                     device=self.device,
+                    trained_model=self.global_model,
                 )
                 epoch_metric_recorder.update_from_dict(train_results)
 
@@ -186,8 +193,8 @@ class FederatedCongruentServer:
 
             print_fn("Finished training global model")
             print_fn("Evaluating global model on validation data")
-            self.global_model.eval()
-            self.global_model.metric_recorder.reset()
+            self.global_cmam.eval()
+            self.global_cmam.metric_recorder.reset()
             epoch_metric_recorder.reset()
 
             for batch in tqdm(
@@ -197,8 +204,12 @@ class FederatedCongruentServer:
                 total=len(self.global_val_data),
             ):
                 # batch["missing_index"] = mp
-                val_results = self.global_model.evaluate(
-                    batch=batch, device=self.device, criterion=criterion
+                val_results = self.global_cmam.evaluate(
+                    batch=batch,
+                    device=self.device,
+                    cmam_criterion=criterion,
+                    labels=batch["label"],
+                    trained_model=self.global_model,
                 )
                 epoch_metric_recorder.update_from_dict(val_results)
 
@@ -222,7 +233,7 @@ class FederatedCongruentServer:
                 max_width=20,
             )
 
-            model_state_dict = self.global_model.state_dict()
+            model_state_dict = self.global_cmam.state_dict()
             os.makedirs(
                 os.path.dirname(
                     self.config.server_config.logging_config.model_output_path.format_map(
@@ -391,37 +402,39 @@ class FederatedCongruentServer:
                 f.write(json_str)
 
             # Check if this round's performance is the best so far
+            save_metric = self.config.server_config.logging_config.save_metric
+            current_metric_value = global_performance[save_metric]
+            best_metric_value = (
+                best_global_performance[save_metric]
+                if best_global_performance
+                else None
+            )
+            minimising = True if save_metric == "loss" else False
+
             if (
                 best_global_performance is None
-                or global_performance[
-                    self.config.server_config.logging_config.save_metric
-                ]
-                > best_global_performance[
-                    self.config.server_config.logging_config.save_metric
-                ]
+                or (minimising and current_metric_value < best_metric_value)
+                or (not minimising and current_metric_value > best_metric_value)
             ):
                 best_global_performance = global_performance
-                best_global_model_state = self.global_model.state_dict()
-                best_round = round
+                best_global_model_state = self.global_cmam.state_dict()
+                best_round = self.current_round
 
-                os.makedirs(
-                    os.path.dirname(
-                        self.config.server_config.logging_config.model_output_path.format_map(
-                            SafeDict(round=str(self.current_round))
-                        )
-                    ),
-                    exist_ok=True,
+                # Create the directory if it doesn't exist
+                output_dir = os.path.dirname(
+                    self.config.server_config.logging_config.model_output_path
                 )
+                os.makedirs(output_dir, exist_ok=True)
+
+                # Create a filename that includes the round number and metric value
+                filename = f"best_model_round_{best_round}_{save_metric}_{current_metric_value:.4f}.pth"
+                full_path = os.path.join(output_dir, filename)
+
                 # Save the best model
-                torch.save(
-                    best_global_model_state,
-                    self.config.server_config.logging_config.model_output_path.format_map(
-                        SafeDict(round=str(self.current_round))
-                    ).replace(
-                        ".pth", "_best.pth"
-                    ),
+                torch.save(best_global_model_state, full_path)
+                print(
+                    f"New best model saved at round {best_round} with {save_metric} of {current_metric_value:.4f}"
                 )
-                print_fn(f"New best model saved at round {round}")
 
             # Early stopping check
             if self.config.server_config.early_stopping:
@@ -435,7 +448,7 @@ class FederatedCongruentServer:
                     break
 
         # Load the best model for final evaluation
-        self.global_model.load_state_dict(best_global_model_state)
+        self.global_cmam.load_state_dict(best_global_model_state)
         final_test_results = self.evaluate_global_model(
             self.global_test_data, criterion
         )
@@ -455,4 +468,4 @@ class FederatedCongruentServer:
         }
 
     def __str__(self) -> str:
-        return f"FederatedCongruentServer: {self.global_model}\nAggregation Strategy: {self.aggregation_strategy}\nNumber of Clients: {self.num_clients}\nDevice: {self.device}\nCurrent Round: {self.current_round}"
+        return f"FederatedCongruentServer: {self.global_cmam}\nAggregation Strategy: {self.aggregation_strategy}\nNumber of Clients: {self.num_clients}\nDevice: {self.device}\nCurrent Round: {self.current_round}"

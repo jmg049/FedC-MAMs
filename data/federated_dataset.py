@@ -178,8 +178,12 @@ class FederatedDataSplitter:
                 client_class_indices[client_id].extend(indices[start:end])
                 start = end
 
-        for client_id in range(self.num_clients):
-            self.client_indices[client_id] = np.array(client_class_indices[client_id])
+        for client_id in range(1, self.num_clients + 1):
+            self.client_indices[client_id] = np.array(
+                client_class_indices[client_id - 1]
+            )
+
+        print(self.client_indices.keys())
 
     def get_client_indices(self, client_id: int) -> np.array:
         """Get indices for a specific client."""

@@ -12,6 +12,7 @@ from rich.console import Console
 from tqdm import tqdm
 
 from config import CMAMConfig, resolve_model_name
+from config.federated_cmam_config import FederatedCMAMConfig
 from data import build_dataloader
 from missing_index import missing_pattern
 from models import CMAMProtocol, MultimodalModelProtocol, check_protocol_compliance
@@ -418,6 +419,7 @@ if __name__ == "__main__":
             miss_type = np.array(miss_type)
 
             target_miss_type_mask = miss_type == config.training.target_missing_type
+
             preds.append(results["predictions"][target_miss_type_mask])
             labels.append(results["labels"][target_miss_type_mask])
 

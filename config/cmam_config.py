@@ -18,6 +18,17 @@ from config import (
 )
 
 
+def cmam_model_constructor(loader, node):
+    value = loader.construct_mapping(node)
+    if value["name"].lower() == "basiccmam":
+        return CMAMModelConfig(**value)
+    else:
+        return DualCMAMModelConfig(**value)
+
+
+yaml.SafeLoader.add_constructor("!CMAMModelConfig", cmam_model_constructor)
+
+
 @dataclass(kw_only=True)
 class CMAMModelConfig(BaseConfig):
     """Configuration for the CMAM model."""
@@ -28,6 +39,7 @@ class CMAMModelConfig(BaseConfig):
     assoc_net_input_size: int
     assoc_net_hidden_size: int
     assoc_net_output_size: int
+    target_missing_type: str
     assoc_dropout: float = 0.0
     assoc_use_bn: bool = False
     fusion_fn: str = "concat"

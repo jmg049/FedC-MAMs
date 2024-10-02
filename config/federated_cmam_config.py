@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 import yaml
+from config.cmam_config import CMAMModelConfig
 from config.config import (
     BaseConfig,
     Config,
@@ -17,23 +18,24 @@ from config.config import (
 )
 from data.label_functions import avmnist_get_label_fn, cmu_get_label_fn
 from utils import SafeDict
+from modalities import Modality
 
 
-def federated_server_constructor(loader, node):
+def federated_cmam_server_constructor(loader, node):
     value = loader.construct_mapping(node)
     return FederatedCMAMServerConfig(**value)
 
 
-def federated_client_constructor(loader, node):
+def federated_cmam_client_constructor(loader, node):
     value = loader.construct_mapping(node)
     return FederatedCMAMClientConfig(**value)
 
 
 yaml.SafeLoader.add_constructor(
-    "!FederatedCMAMServerConfig", federated_server_constructor
+    "!FederatedCMAMServerConfig", federated_cmam_server_constructor
 )
 yaml.SafeLoader.add_constructor(
-    "!FederatedCMAMClientConfig", federated_client_constructor
+    "!FederatedCMAMClientConfig", federated_cmam_client_constructor
 )
 
 
@@ -46,11 +48,13 @@ class FederatedCMAMClientConfig(BaseConfig):
     local_epochs: int
     local_batch_size: int
     model_config: ModelConfig
+    cmam_config: CMAMModelConfig
+    available_modalities: set[Modality | str]
     scheduler: Optional[str] = None
     scheduler_kwargs: Dict[str, Any] = field(default_factory=dict)
     target_metric: str = "loss"
     logging: LoggingConfig
-    output_dir: str = "federated_output"
+    target_modality: Modality | str
     early_stopping: bool
     early_stopping_patience: int
     early_stopping_metric: str
@@ -113,11 +117,15 @@ class FederatedCMAMServerConfig(BaseConfig):
     num_clients: int
     aggregation_strategy: str
     global_model_config: ModelConfig
+    cmam_model_configs: (
+        list[CMAMModelConfig] | CMAMModelConfig
+    )  ## The global model has all the modalities and therefore needs to train all the C-MAMs (in the incongruent setting anyways)
     optimizer: str
     optimizer_kwargs: Dict[str, Any]
     criterion: str
     criterion_kwargs: Dict[str, Any]
     epochs: int
+    target_missing_type: str
     logging_config: LoggingConfig
     early_stopping: bool
     early_stopping_patience: int
@@ -126,13 +134,13 @@ class FederatedCMAMServerConfig(BaseConfig):
 
 
 @dataclass(kw_only=True)
-class FederatedConfig(Config):
+class FederatedCMAMConfig(Config):
     server_config: FederatedCMAMServerConfig
     client_config: FederatedCMAMClientConfig
     data_config: FederatedDataConfig
 
     @classmethod
-    def load(cls, path: str | Path | PathLike, run_id: int) -> "FederatedConfig":
+    def load(cls, path: str | Path | PathLike, run_id: int) -> "FederatedCMAMConfig":
         with open(path, "r") as f:
             data = yaml.safe_load(f)
         experiment_config = data["experiment"]
@@ -220,7 +228,7 @@ class FederatedConfig(Config):
         )
         return criterion
 
-    def get_client_config(self) -> FederatedClientConfig:
+    def get_client_config(self) -> FederatedCMAMClientConfig:
         return self.client_config
 
     def get_criterion(self, criterion_name: str, criterion_kwargs: Dict[str, Any] = {}):
