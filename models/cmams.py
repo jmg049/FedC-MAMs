@@ -117,6 +117,7 @@ class BasicCMAM(Module):
         trained_model: MultimodalModelProtocol,
     ):
         self.train()
+        self.to(device)
         target_modality = batch[str(self.target_modality)[0].upper()].float().to(device)
         input_modalities = {
             modality: batch[str(modality)[0].upper()].float().to(device)
@@ -200,6 +201,8 @@ class BasicCMAM(Module):
     ):
         self.eval()
         trained_model.eval()
+        self.to(device)
+        trained_model.to(device)
         with torch.no_grad():
             target_modality = (
                 batch[str(self.target_modality)[0].upper()].float().to(device)
