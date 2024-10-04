@@ -5,6 +5,11 @@ from scipy.stats import entropy
 from tqdm import tqdm
 
 
+from utils import get_logger
+
+logger = get_logger()
+
+
 class FederatedDataSplitter:
     """
     Class to split dataset indices for federated learning experiments.
@@ -56,6 +61,8 @@ class FederatedDataSplitter:
 
         self._partition_data()
         self._split_data()
+        for k, v in self.client_indices.items():
+            logger.info(f"Client {k} has {len(v)} samples")
 
     def _partition_data(self):
         """
@@ -183,7 +190,7 @@ class FederatedDataSplitter:
                 client_class_indices[client_id - 1]
             )
 
-        print(self.client_indices.keys())
+        # print(self.client_indices.keys())
 
     def get_client_indices(self, client_id: int) -> np.array:
         """Get indices for a specific client."""
@@ -230,6 +237,8 @@ class FederatedDataSplitter:
             client_indices = self.get_client_indices(client_id)
             client_labels = [self.get_label_fn(self.dataset[i]) for i in client_indices]
             client_labels = np.array(client_labels)
+            if client_labels.dtype != np.int64:
+                client_labels = client_labels.astype(np.int64)
             client_label_counts = np.bincount(
                 client_labels, minlength=len(unique_labels)
             )

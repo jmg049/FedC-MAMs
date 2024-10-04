@@ -155,6 +155,9 @@ class MetricRecorder:
             f"{results_str}"
         )
 
+    def __repr__(self) -> str:
+        return self.__str__()
+
     @classmethod
     def from_yaml(cls, yaml_path: str) -> "MetricRecorder":
         with open(yaml_path, "r") as f:

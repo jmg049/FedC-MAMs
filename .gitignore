@@ -3,7 +3,7 @@ DATA/*
 config/*.yaml
 
 **/__pycache__/**
-experiments/*
+experiments*/*
 
 poetry.lock
 metric_output/*

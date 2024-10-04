@@ -1,5 +1,5 @@
 experiment: !ExperimentConfig
-  name: "MOSEI Federated Learning - IID Setup"
+  name: "MOSEI Federated Learning - Non-IID - 50 Clients - 25 Rounds"
   debug: False
   device: "cuda"
   do_test: True
@@ -23,9 +23,9 @@ data:
       split: "test"
       shuffle: True
     global_fraction: 0.1
-    distribution_type: "iid"
-    sampling_strategy: "stratified"
-    alpha: 1.0  # Not used for uniform sampling, but included for completeness
+    distribution_type: "non_iid"
+    sampling_strategy: "non_iid"
+    alpha: 0.5  # Not used for uniform sampling, but included for completeness
     get_label_fn: "mosei"
 
 federated: 
@@ -70,7 +70,7 @@ federated:
       weight_decay: 0.00001
     criterion: "cross_entropy"
     criterion_kwargs: {}
-    local_epochs: 10  
+    local_epochs: 10
     logging: 
       save_metric: "NonZeroF1_AVL"
       log_path: "experiments/mosei_federated/logs/{experiment_name}/{run_id}/client_{client_id}/"

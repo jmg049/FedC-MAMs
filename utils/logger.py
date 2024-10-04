@@ -1,72 +1,49 @@
-import time
-import os
 import logging
-import fcntl
+import os
+import time
+from typing import Optional
 
 
-def get_logger(path, suffix=""):
-    cur_time = time.strftime("%Y-%m-%d-%H.%M.%S", time.localtime(time.time()))
-    logger = logging.getLogger(__name__ + cur_time)
-    logger.setLevel(level=logging.INFO)
-    os.makedirs(path, exist_ok=True)
-    handler = logging.FileHandler(os.path.join(path, f"{suffix}_{cur_time}.log"))
-    handler.setLevel(logging.INFO)
-    formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-    handler.setFormatter(formatter)
+class LoggerSingleton:
+    _instance: Optional[logging.Logger] = None
+    _initialized: bool = False
 
-    console = logging.StreamHandler()
-    console.setLevel(logging.INFO)
+    @classmethod
+    def get_logger(cls) -> logging.Logger:
+        if cls._instance is None:
+            cls._instance = logging.getLogger(__name__)
+            cls._instance.setLevel(logging.INFO)
+        return cls._instance
 
-    logger.addHandler(handler)
-    logger.addHandler(console)
-    return logger
+    @classmethod
+    def configure(cls, log_path: str, log_level=logging.INFO, suffix: str = ""):
+        if not cls._initialized:
+            logger = cls.get_logger()
+            logger.handlers.clear()  # Clear any existing handlers
 
-
-class ResultRecorder(object):
-    def __init__(self, path, total_cv=10):
-        self.path = path
-        self.total_cv = total_cv
-        if not os.path.exists(self.path):
-            f = open(self.path, "w")
-            f.write("acc\tuar\tf1\n")
-            f.close()
-
-    def is_full(self, content):
-        if len(content) < self.total_cv + 1:
-            return False
-
-        for line in content:
-            if not len(line.split("\t")) == 3:
-                return False
-        return True
-
-    def calc_mean(self, content):
-        acc = [float(line.split("\t")[0]) for line in content[1:]]
-        uar = [float(line.split("\t")[1]) for line in content[1:]]
-        f1 = [float(line.split("\t")[2]) for line in content[1:]]
-        mean_acc = sum(acc) / len(acc)
-        mean_uar = sum(uar) / len(uar)
-        mean_f1 = sum(f1) / len(f1)
-        return mean_acc, mean_uar, mean_f1
-
-    def write_result_to_tsv(self, results, cvNo):
-        f_in = open(self.path)
-        fcntl.flock(f_in.fileno(), fcntl.LOCK_EX)  # 加锁
-        content = f_in.readlines()
-        if len(content) < self.total_cv + 1:
-            content += ["\n"] * (self.total_cv - len(content) + 1)
-        content[cvNo] = "{:.4f}\t{:.4f}\t{:.4f}\n".format(
-            results["acc"], results["uar"], results["f1"]
-        )
-        if self.is_full(content):
-            mean_acc, mean_uar, mean_f1 = self.calc_mean(content)
-            content.append(
-                "{:.4f}\t{:.4f}\t{:.4f}\n".format(mean_acc, mean_uar, mean_f1)
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            cur_time = time.strftime("%Y-%m-%d-%H.%M.%S", time.localtime(time.time()))
+            file_handler = logging.FileHandler(
+                os.path.join(log_path, f"{suffix}_{cur_time}.log")
             )
+            file_handler.setLevel(logging.INFO)
+            formatter = logging.Formatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            )
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
 
-        f_out = open(self.path, "w")
-        f_out.writelines(content)
-        f_out.close()
-        f_in.close()  # 释放锁
+            # console_handler = logging.StreamHandler()
+            # console_handler.setLevel(logging.INFO)
+            # console_handler.setFormatter(formatter)
+            # logger.addHandler(console_handler)
+
+            cls._initialized = True
+
+
+def get_logger() -> logging.Logger:
+    return LoggerSingleton.get_logger()
+
+
+def configure_logger(config, suffix: str = ""):
+    LoggerSingleton.configure(config.logging.log_path, suffix)

@@ -1,5 +1,5 @@
 experiment: !ExperimentConfig
-  name: "MOSEI Federated Learning - IID Setup"
+  name: "MOSEI Federated Learning - Non-IID - 50 Clients - 25 Rounds"
   debug: False
   device: "cuda"
   do_test: True
@@ -25,7 +25,7 @@ data:
     global_fraction: 0.1
     distribution_type: "iid"
     sampling_strategy: "stratified"
-    alpha: 1.0  # Not used for uniform sampling, but included for completeness
+    alpha: 0.1 # Not used for uniform sampling, but included for completeness
     get_label_fn: "mosei"
 
 federated: 

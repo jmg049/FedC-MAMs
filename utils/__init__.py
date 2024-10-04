@@ -7,6 +7,8 @@ from rich.console import Console
 from rich.text import Text
 from rich import box
 
+from .logger import get_logger, configure_logger, LoggerSingleton
+
 
 class SafeDict(dict):
     def __missing__(self, key):
@@ -94,6 +96,7 @@ def print_metrics_tables(
     max_width: int = 20,
     console: Console = None,
     target_metric: str = None,
+    generic_table: bool = False,
 ) -> None:
     """
     Print metrics tables with bordered formatting, grouped by conditions.
@@ -128,7 +131,7 @@ def print_metrics_tables(
             metric_name = "_".join(metric.split("_")[:-1])
         else:
             metric_name = metric
-            condition = "No Condition"
+            condition = "No Condition" if not generic_table else ""
 
         if condition not in grouped_metrics:
             grouped_metrics[condition] = {}
@@ -212,7 +215,12 @@ def print_metrics_tables(
 
 
 def print_all_metrics_tables(
-    metrics, max_cols_per_row=10, max_width=20, console=None, target_metric=None
+    metrics,
+    max_cols_per_row=10,
+    max_width=20,
+    console=None,
+    target_metric=None,
+    generic_table: bool = False,
 ) -> None:
     if console is None:
         console = Console()

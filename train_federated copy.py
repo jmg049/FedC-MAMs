@@ -1,14 +1,11 @@
 import argparse
 import json
-import logging
 import os
-from pprint import pformat
 
 import torch
 from modalities import add_modality
 from rich.console import Console
 
-import utils
 from config import FederatedConfig, resolve_model_name
 from data import (
     create_federated_dataloaders,
@@ -16,7 +13,9 @@ from data import (
 )
 from federated.client import FederatedMultimodalClient
 from federated.server import FederatedCongruentServer
+from models import MultimodalModelProtocol, check_protocol_compliance
 from utils import SafeDict, print_all_metrics_tables
+from utils.logger import get_logger
 from utils.metric_recorder import MetricRecorder
 
 add_modality("VIDEO")
@@ -24,43 +23,23 @@ add_modality("VIDEO")
 console = Console()
 
 
-def main(config: FederatedConfig):
-    logger.info("Starting Federated Learning")
+def main(config_path: str, run_id: int = -1):
+    # Load configuration
+    config = FederatedConfig.load(config_path, run_id=run_id)
+    console.print(
+        config,
+        style="bold green",
+    )
+    # Set up logging
+    server_logger = get_logger(config.server_config.logging.log_path)
+    server_logger.info(f"Loaded configuration from {config_path}")
 
+    # Set device
     device = torch.device(config.experiment.device)
-    console.print(f"Device: {device}")
-    logger.debug(f"Device: {device}")
-
-    metric_recorder = MetricRecorder(config.metrics)
-    console.print(f"Metric Recorder: {metric_recorder}")
-    logger.debug(f"Metric Recorder: {metric_recorder}")
-
-    global_model_cls = resolve_model_name(
-        config.server_config.global_model_config["name"]
-    )
-    global_model = global_model_cls(
-        **config.server_config.global_model_config.kwargs,
-        metric_recorder=metric_recorder,
-    )
-    global_model.to(device)
-
-    console.print(f"Global Model: {global_model}")
-    logger.debug(f"Global Model: {global_model}")
-
-    global_optimizer = config._get_optimizer(global_model, is_global=True)
-    global_criterion = config._get_criterion(is_global=True)
-
-    console.print(f"Global Optimizer: {global_optimizer}")
-    logger.debug(f"Global Optimizer: {global_optimizer}")
-
-    console.print(f"Global Criterion: {global_criterion}")
-    logger.debug(f"Global Criterion: {global_criterion}")
 
     num_clients = config.server_config.num_clients
-    console.print(f"Number of Clients: {num_clients}")
-    logger.info(f"Number of Clients: {num_clients}")
 
-    # ## create all datasets
+    ## create all dataloaders
     (
         train_dataset,
         train_iid_metrics,
@@ -71,9 +50,6 @@ def main(config: FederatedConfig):
     ) = create_federated_datasets(
         num_clients=num_clients, data_config=config.data_config
     )
-
-    console.print("Federated Datasets created successfully")
-
     console.rule("IID Metrics")
     iid_metrics = {
         "train": train_iid_metrics,
@@ -85,21 +61,32 @@ def main(config: FederatedConfig):
         if metrics is not None:
             console.print(f"[bold]{split}[/bold]")
             print_all_metrics_tables(
-                metrics,
-                max_cols_per_row=10,
-                max_width=20,
-                console=console,
-                generic_table=True,
+                metrics, max_cols_per_row=10, max_width=20, console=console
             )
-    logger.debug(f"IID Metrics: {iid_metrics}")
-    logger.debug(f"Saving iid metrics to {config.logging.iid_metrics_path}")
-
-    os.makedirs(os.path.dirname(config.logging.iid_metrics_path), exist_ok=True)
-    with open(config.logging.iid_metrics_path, "w") as f:
+    if config.data_config.distribution_type == "non_iid":
+        iid_metrics_output_path = os.path.join(
+            config.server_config.logging.metrics_path.format_map(
+                SafeDict(
+                    run_id=config.experiment.run_id,
+                    alpha=f"_{config.data_config.alpha}",
+                    round="",
+                )
+            ),
+            "iid_metrics.json",
+        )
+    else:
+        iid_metrics_output_path = os.path.join(
+            config.server_config.logging.metrics_path.format_map(
+                SafeDict(run_id=config.experiment.run_id, round="")
+            ),
+            "iid_metrics.json",
+        )
+    os.makedirs(os.path.dirname(iid_metrics_output_path), exist_ok=True)
+    ## write the iid metrics to a file under the metrics path
+    with open(iid_metrics_output_path, "w") as f:
         json_str = json.dumps(iid_metrics, indent=4)
         f.write(json_str)
-
-    logger.debug("IID Metrics saved successfully")
+    console.print(f"IID Metrics saved to {iid_metrics_output_path}")
 
     federated_dataloaders = create_federated_dataloaders(
         {
@@ -114,10 +101,21 @@ def main(config: FederatedConfig):
     global_val_loader = federated_dataloaders["validation"]["global"]
     global_test_loader = federated_dataloaders["test"]["global"]
 
-    console.print("Global Dataloaders created successfully")
-    console.print(f"No. of Global Train Batches: {len(global_train_loader)}")
-    console.print(f"No. of Global Validation Batches: {len(global_val_loader)}")
-    console.print(f"No. of Global Test Batches: {len(global_test_loader)}")
+    global_model_cls = resolve_model_name(
+        config.server_config.global_model_config["name"]
+    )
+
+    metric_recorder = MetricRecorder(config.metrics)
+
+    global_model = global_model_cls(
+        **config.server_config.global_model_config.kwargs,
+        metric_recorder=metric_recorder,
+    )
+    global_model.to(device)
+    check_protocol_compliance(global_model, MultimodalModelProtocol)
+
+    global_optimizer = config._get_optimizer(global_model, is_global=True)
+    global_criterion = config._get_criterion(is_global=True)
 
     # Initialize server
     server = FederatedCongruentServer(
@@ -131,30 +129,12 @@ def main(config: FederatedConfig):
         config=config,
     )
 
-    console.print("Server initialized successfully")
-    logger.info("Server initialized successfully")
-    console.print(f"{server}")
-
     # Initialize clients
     clients = []
     for client_id in range(
         config.server_config.num_clients
     ):  # Start from 1 as 0 is for global
         client_config = config.get_client_config()
-
-        client_model_output_path = client_config.logging.model_output_path.format_map(
-            SafeDict(client_id=client_id)
-        )
-        metrics_path = client_config.logging.metrics_path.format_map(
-            SafeDict(client_id=client_id)
-        )
-
-        os.makedirs(os.path.dirname(client_model_output_path), exist_ok=True)
-        os.makedirs(metrics_path, exist_ok=True)
-
-        logger.info(
-            f"Created directories: {client_config.logging.model_output_path} and {client_config.logging.metrics_path}"
-        )
 
         # Initialize client model
         client_model = global_model_cls(
@@ -187,10 +167,6 @@ def main(config: FederatedConfig):
         )
         clients.append(client)
 
-    logger.debug("Clients initialized successfully")
-    for client in clients:
-        logger.debug(f"{client}\n\n")
-
     # Run federated learning
     results = server.run_federated_learning(
         num_rounds=config.server_config.rounds,
@@ -202,24 +178,16 @@ def main(config: FederatedConfig):
     )
 
     # Print final results
-    console.rule("Final Results")
+    server_logger.info("Federated Learning completed")
     print_all_metrics_tables(results["final_test_results"], console=console)
 
-    console.print(f"Best Round: {results['best_round']}")
-    console.print(
-        f"Best Global Performance:\n{pformat(results['best_global_performance'])}"
-    )
-    console.rule("End of Federated Learning")
-    # Save results
+    console.print(f"Best Round: {results["best_round"]}")
+    console.print(f"Best Global Performance:\n{results["best_global_performance"]}")
 
-    final_metrics_path = os.path.join(
-        config.server_config.logging.metrics_path.format_map(SafeDict(round="")),
-        "best_test_metrics.json",
-    )
-    with open(final_metrics_path, "w") as f:
+    # Save results
+    with open(config.server_config.logging.metrics_path, "w") as f:
         json_str = json.dumps(results["final_test_results"], indent=4)
         f.write(json_str)
-    console.print(f"Metrics saved to {config.server_config.logging.metrics_path}")
 
 
 if __name__ == "__main__":
@@ -233,37 +201,5 @@ if __name__ == "__main__":
     )
     parser.add_argument("--run_id", default=-1, type=int, help="Run ID for logging")
     args = parser.parse_args()
-    config_path = args.config
-    run_id = args.run_id
-    config = FederatedConfig.load(config_path, run_id=run_id)
-    console.print(
-        config,
-        style="bold green",
-    )
 
-    console.print("Config loaded successfully", style="bold green")
-    console.print("Configuring logger...", style="bold blue")
-
-    level = logging.DEBUG if config.experiment.debug else logging.INFO
-
-    utils.configure_logger(config)
-
-    logger = utils.get_logger()
-
-    ## This message should not be visible in the console
-    logger.info(
-        "Logger configured successfully. Logging to %s", config.logging.log_path
-    )
-
-    logger.info(f"{config.experiment.name} - Run ID: {run_id}")
-
-    console.print(
-        "Logger successfully configured and is logging to %s",
-        config.logging.log_path + logger.handlers[0].baseFilename,
-        style="bold blue",
-    )
-
-    logger.info(f"Loaded configuration from {config_path}")
-    logger.info(config)
-
-    main(config)
+    main(args.config, args.run_id)

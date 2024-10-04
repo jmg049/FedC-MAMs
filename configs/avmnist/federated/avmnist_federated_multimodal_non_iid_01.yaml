@@ -1,6 +1,8 @@
 experiment: !ExperimentConfig
-  name: "AVMNIST (CMAMs A-I): Federated Training"
-  debug: False
+  name: "AVMNIST Federated Learning - Classification"
+  debug: True
+  device: "cuda"
+  do_test: True
 
 data:
   train:
@@ -18,7 +20,6 @@ data:
     split: "valid"
     drop_last: True
     pin_memory: True
-    shuffle: True
   test:
     dataset: "avmnist"
     data_fp: "DATA/avmnist/test_subset.csv"
@@ -26,44 +27,36 @@ data:
     split: "test"
     drop_last: True
     pin_memory: True
-    shuffle: True
   global_fraction: 0.02
-  distribution_type: "iid"
-  sampling_strategy: "stratified"
-  alpha: 1.0
+  distribution_type: "non_iid"
+  sampling_strategy: "non_iid"
+  alpha: 0.1
   get_label_fn: "avmnist"
 
-federated:
-  server_config: !FederatedCMAMServerConfig
-    num_clients: 50
-    rounds: 15
+federated: 
+  server_config: !FederatedServerConfig
+    num_clients: 50 # for avmnist subset this is 588 samples per client with the global model have 360 samples
+    rounds: 25  # Suggested number of federated rounds
     aggregation_strategy: "fedavg"
-    optimizer: "Adam" 
-    optimizer_kwargs: &OptimizerKwargs
+    optimizer: "Adam"
+    optimizer_kwargs:
       lr: 0.001
       weight_decay: 0.00001
-    criterion: "cmam"
-    criterion_kwargs: &CMAMCriterion
-      cosine_weight: 1.0
-      mse_weight: 1.0
-      mae_weight: 1.0
-      cls_weight: 0.05
-      rec_weight: 1.0
-    target_missing_type: "az"
+    criterion: "cross_entropy"
+    criterion_kwargs: {}
     epochs: 1
-    logging_config:
+    
+    logging: 
       save_metric: "loss"
-      log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/global"
-      model_output_path: "experiments/avmnist_federated/models/{experiment_name}/{run_id}/global/{round}/cmam_A_to_I_{save_metric}.pth" 
-      metrics_paths: "experiments/avmnist_federated/metrics/{experiment_name}/global/{run_id}/cmam_A_to_I"
-
+      log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/global/"
+      model_output_path: "experiments/avmnist_federated/models/{experiment_name}/{run_id}/global/{round}/avmnist_federated_model{save_metric}.pth"
+      metrics_path: "experiments/avmnist_federated/metrics/{experiment_name}/{run_id}/global/{round}"
+    
     early_stopping: False
     early_stopping_patience: 10
     early_stopping_metric: "loss"
-    
     global_model_config: !ModelConfig &model
       name: "AVMNIST"
-      pretrained_path: "experiments/avmnist_federated/models/AVMNIST_Federated_Learning___Classification/{run_id}/global/avmnist_federated_model_loss_best.pth"
       audio_encoder: !MNISTAudio
         conv_block_one_args: !ConvBlock
           conv_one_in: 1
@@ -91,49 +84,30 @@ federated:
       hidden_dim: 128
       dropout: 0.5
       fusion_fn: "concat"
-
-    cmam_model_configs: !CMAMModelConfig &cmam_model
-      name: "BasicCMAM"
-      input_encoder_info:
-        Audio: !MNISTAudio
-          conv_block_one_args: !ConvBlock
-            conv_one_in: 1
-            conv_one_out: 32
-          conv_block_two_args: !ConvBlock
-            conv_one_in: 32
-            conv_one_out: 32
-          conv_batch_norm: True
-          hidden_dim: 64
-      target_modality: !Modality "Image" 
-      assoc_net_input_size: 64
-      assoc_net_hidden_size: 256
-      assoc_net_output_size: 128
-      assoc_dropout: 0.4
-      assoc_use_bn: True 
-      grad_clip: 0.5
-      target_missing_type: "az"
-
-  client_config: !FederatedCMAMClientConfig
-    optimizer: "Adam"
-    optimizer_kwargs: *OptimizerKwargs
-    criterion: "cmam"
-    criterion_kwargs: *CMAMCriterion
-    local_epochs: 5
-    local_batch_size: 256
+  client_config: !FederatedClientConfig
     model_config: *model
-    cmam_config: *cmam_model
-    available_modalities:
-      - "Audio"
-    target_metric: "loss"
-    logging:
+    optimizer: "Adam"
+    optimizer_kwargs:
+      lr: 0.0001
+      weight_decay: 0.00001
+    criterion: "cross_entropy"
+    criterion_kwargs: {}
+    local_epochs: 5
+
+    logging: 
       save_metric: "loss"
-      log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/client_{client_id}"
-      model_output_path: "experiments/avmnist_federated/models/{experiment_name}/{run_id}/client_{client_id}/cmam_A_to_I_{save_metric}.pth"
-      metrics_paths: "experiments/avmnist_federated/metrics/{experiment_name}/client_{client_id}/cmam_A_to_I"
+      log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/client_{client_id}/"
+      model_output_path: "experiments/avmnist_federated/models/{experiment_name}/{run_id}/client_{client_id}/avmnist_federated_model{save_metric}.pth"
+      metrics_path: "experiments/avmnist_federated/metrics/{experiment_name}/{run_id}/client_{client_id}/"
+    
+    local_batch_size: 128
     early_stopping: False
     early_stopping_patience: 10
     early_stopping_metric: "loss"
-    target_modality: !Modality "Image"
+
+logging:
+  log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/"
+  iid_metrics_path: "experiments/avmnist_federated/metrics/{experiment_name}/{run_id}/iid_metrics.json"
 
 metrics:
   metrics:

@@ -1,6 +1,6 @@
 experiment: !ExperimentConfig
-  name: "AVMNIST Federated Learning - Non-IID Setup"
-  debug: False
+  name: "AVMNIST Federated Learning - Classification"
+  debug: True
   device: "cuda"
   do_test: True
 
@@ -30,13 +30,13 @@ data:
   global_fraction: 0.02
   distribution_type: "non_iid"
   sampling_strategy: "non_iid"
-  alpha: 0.25
+  alpha: 0.5
   get_label_fn: "avmnist"
 
 federated: 
   server_config: !FederatedServerConfig
-    num_clients: 30 # for avmnist subset this is 588 samples per client with the global model have 360 samples
-    rounds: 15  # Suggested number of federated rounds
+    num_clients: 50 # for avmnist subset this is 588 samples per client with the global model have 360 samples
+    rounds: 25  # Suggested number of federated rounds
     aggregation_strategy: "fedavg"
     optimizer: "Adam"
     optimizer_kwargs:
@@ -45,11 +45,13 @@ federated:
     criterion: "cross_entropy"
     criterion_kwargs: {}
     epochs: 1
-    logging_config: 
+    
+    logging: 
       save_metric: "loss"
-      log_path: "experiments/avmnist_federated/logs/{experiment_name}{alpha}/{run_id}/global/"
-      model_output_path: "experiments/avmnist_federated/models/{experiment_name}{alpha}/{run_id}/global/{round}/avmnist_federated_model_{save_metric}.pth"
-      metrics_paths: "experiments/avmnist_federated/metrics/{experiment_name}{alpha}/{run_id}/global/{round}"
+      log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/global/"
+      model_output_path: "experiments/avmnist_federated/models/{experiment_name}/{run_id}/global/{round}/avmnist_federated_model{save_metric}.pth"
+      metrics_path: "experiments/avmnist_federated/metrics/{experiment_name}/{run_id}/global/{round}"
+    
     early_stopping: False
     early_stopping_patience: 10
     early_stopping_metric: "loss"
@@ -91,16 +93,21 @@ federated:
     criterion: "cross_entropy"
     criterion_kwargs: {}
     local_epochs: 5
+
     logging: 
       save_metric: "loss"
-      log_path: "experiments/avmnist_federated/logs/{experiment_name}{alpha}/{run_id}/client_{client_id}/"
-      model_output_path: "experiments/avmnist_federated/models/{experiment_name}{alpha}/{run_id}/client_{client_id}/avmnist_federated_model_{save_metric}.pth"
-      metrics_paths: "experiments/avmnist_federated/metrics/{experiment_name}{alpha}/{run_id}/client_{client_id}/"
+      log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/client_{client_id}/"
+      model_output_path: "experiments/avmnist_federated/models/{experiment_name}/{run_id}/client_{client_id}/avmnist_federated_model{save_metric}.pth"
+      metrics_path: "experiments/avmnist_federated/metrics/{experiment_name}/{run_id}/client_{client_id}/"
+    
     local_batch_size: 128
     early_stopping: False
     early_stopping_patience: 10
     early_stopping_metric: "loss"
 
+logging:
+  log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/"
+  iid_metrics_path: "experiments/avmnist_federated/metrics/{experiment_name}/{run_id}/iid_metrics.json"
 
 metrics:
   metrics:

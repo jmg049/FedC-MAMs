@@ -11,10 +11,11 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from config.federated_cmam_config import FederatedCMAMClientConfig
-from config.federated_config import FederatedClientConfig
 from federated import FederatedResult
 from models import CMAMProtocol, MultimodalModelProtocol
-from utils import print_all_metrics_tables
+from utils import print_all_metrics_tables, get_logger
+
+logger = get_logger()
 
 
 class FederatedCMAMClient:
@@ -247,6 +248,8 @@ class FederatedCMAMClient:
                 console=None,
                 max_cols_per_row=16,
             )
+
+            logger.info(f"Validation Metrics: {val_metrics}")
 
             ## update best model
             if self.fed_config.target_metric == "loss":

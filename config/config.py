@@ -174,69 +174,73 @@ class ModelConfig(BaseConfig):
 class LoggingConfig(BaseConfig):
     """Configuration for logging."""
 
-    save_metric: str
-    save_condition: Optional[str] = "AVL"
-    log_path: str = "logs/log.txt"
-    model_output_path: str = "models/model.pt"
-    metrics_path: str = "metrics/metrics.json"
-    run_id: Optional[str] = None
-    experiment_name: Optional[str] = None
+    log_path: str
+    run_id: str
+    experiment_name: str
+    save_metric: Optional[str] = None
+    model_output_path: Optional[str] = None
+    metrics_path: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: dict, run_id: str, experiment_name: str):
         """Create LoggingConfig from a dictionary with formatted paths."""
-        log_path = Path(
-            data["log_path"].format_map(
+        log_path = data["log_path"].format_map(
+            SafeDict(experiment_name=experiment_name, run_id=run_id)
+        )
+
+        ## convert all whitespace to underscores
+
+        experiment_name = experiment_name.replace(" ", "_")
+        experiment_name = experiment_name.replace("-", "_")
+
+        log_path = log_path.replace(" ", "_")
+        log_path = log_path.replace("-", "_")
+
+        f_data = {
+            "log_path": log_path,
+            "run_id": run_id,
+            "experiment_name": experiment_name,
+        }
+
+        save_metric = data.get("save_metric", None)
+        if save_metric:
+            save_metric = f"_{save_metric}"
+        else:
+            save_metric = ""
+
+        f_data["save_metric"] = save_metric
+
+        model_output_path = data.get("model_output_path", None)
+        if model_output_path:
+            model_output_path = model_output_path.format_map(
+                SafeDict(
+                    experiment_name=experiment_name,
+                    run_id=run_id,
+                    save_metric=save_metric,
+                )
+            )
+            model_output_path = model_output_path.replace(" ", "_")
+            model_output_path = model_output_path.replace("-", "_")
+            f_data["model_output_path"] = model_output_path
+        metrics_path = data.get("metrics_path", None)
+        if metrics_path:
+            metrics_path = data["metrics_path"].format_map(
                 SafeDict(experiment_name=experiment_name, run_id=run_id)
             )
-        )
-        model_output_path = Path(
-            data["model_output_path"].format_map(
-                SafeDict(
-                    experiment_name=experiment_name,
-                    run_id=run_id,
-                    save_metric=data["save_metric"],
-                )
+            metrics_path = metrics_path.replace(" ", "_")
+            metrics_path = metrics_path.replace("-", "_")
+            f_data["metrics_path"] = metrics_path
+
+        iid_metrics_path = data.get("iid_metrics_path", None)
+        if iid_metrics_path:
+            iid_metrics_path = iid_metrics_path.format_map(
+                SafeDict(experiment_name=experiment_name, run_id=run_id)
             )
-        )
-        print(f"MOP: {model_output_path}")
-        print(f"Run ID: {run_id}")
-        print(f"metriccs {data['metrics_paths']}")
-        metrics_path = Path(
-            data["metrics_paths"].format_map(
-                SafeDict(
-                    experiment_name=experiment_name,
-                    run_id=run_id,
-                )
-            )
-        )
-        print(f"metrics path: {metrics_path}")
+            iid_metrics_path = iid_metrics_path.replace(" ", "_")
+            iid_metrics_path = iid_metrics_path.replace("-", "_")
+            f_data["iid_metrics_path"] = iid_metrics_path
 
-        return cls(
-            save_metric=data["save_metric"],
-            log_path=str(log_path),
-            model_output_path=str(model_output_path),
-            metrics_path=str(metrics_path),
-            run_id=run_id,
-            experiment_name=experiment_name,
-        )
-
-
-def ensure_directories(config: LoggingConfig) -> None:
-    """
-    Ensure that all directories specified in the LoggingConfig exist.
-
-    Args:
-        config (LoggingConfig): The logging configuration.
-    """
-    directories = [
-        os.path.dirname(config.log_path),
-        os.path.dirname(config.model_output_path),
-        os.path.dirname(config.metrics_path),
-    ]
-
-    for directory in directories:
-        os.makedirs(directory, exist_ok=True)
+        return cls(**f_data)
 
 
 @dataclass
@@ -244,7 +248,6 @@ class MetricsConfig(BaseConfig):
     """Configuration for metrics."""
 
     metrics: Dict[str, Any] = field(default_factory=dict)
-    main_metric: str = "accuracy"
 
     def items(self):
         return self.metrics.items()
@@ -265,20 +268,6 @@ class Config(BaseConfig):
         """Save configuration to a YAML file."""
         with open(path, "w") as f:
             yaml.dump(self.to_dict(), f)
-
-    def ensure_directories(self):
-        """Ensure that all directories specified in the LoggingConfig exist."""
-        print(self.logging)
-        if self.logging:
-            directories = [
-                os.path.dirname(self.logging.log_path),
-                os.path.dirname(self.logging.model_output_path),
-                os.path.dirname(self.logging.metrics_path),
-            ]
-
-            for directory in directories:
-                os.makedirs(directory, exist_ok=True)
-                LOGGER.info(f"Created directory: {directory}")
 
     def get_optimizer(self, model):
         """Get the optimizer based on the configuration."""

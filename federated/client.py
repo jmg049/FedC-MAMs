@@ -15,6 +15,10 @@ from federated import FederatedResult
 from models import MultimodalModelProtocol
 from utils import print_all_metrics_tables
 
+from utils import get_logger
+
+logger = get_logger()
+
 
 class FederatedMultimodalClient:
     def __init__(
@@ -78,18 +82,13 @@ class FederatedMultimodalClient:
             run_id=run_id, client_id=client_id
         )
 
-        os.makedirs(self.model_output_dir, exist_ok=True)
-        os.makedirs(self.metrics_output_dir, exist_ok=True)
-        os.makedirs(self.logging_output_dir, exist_ok=True)
-
     def get_model_parameters(self) -> Dict[str, torch.Tensor]:
         ## return a deep copy of the state_dict
         state_dict = deepcopy(self.model.state_dict())
         return state_dict
 
     def set_model_parameters(self, model_params: Dict[str, torch.Tensor]):
-        for name, param in self.model.named_parameters():
-            param.data = model_params[name].clone()
+        self.model.load_state_dict(deepcopy(model_params))
 
     def status(self) -> Dict[str, Any]:
         return {
@@ -241,6 +240,8 @@ class FederatedMultimodalClient:
                 max_cols_per_row=16,
             )
 
+            logger.info(f"Validation Metrics: {val_metrics}")
+
             ## update best model
             if self.fed_config.target_metric == "loss":
                 if val_metrics["loss"] < self.best_model_score:
@@ -277,20 +278,8 @@ class FederatedMultimodalClient:
         self.print_fn(
             f"Training round {self.current_round} completed on Client: {self.client_id}."
         )
-
-        # if self.fed_config.do_validation_visualization:
-        #     _vis_proc = Popen(
-        #         [
-        #             "python",
-        #             "visualisation/validation_plotting.py",
-        #             "--root_dir",
-        #             self.fed_config.output_dir,
-        #             f"client_{self.client_id}/{self.current_round}/",
-        #             "--save_path",
-        #             self.fed_config.output_dir,
-        #             f"client_{self.client_id}/{self.current_round}/validation_plots",
-        #         ]
-        #     )
+        logger.info(f"Best Model Path: {self.best_model_path}")
+        logger.info(f"Best Model Score: {self.best_model_score}")
 
         if self.test_loader is not None:
             return self.evaluate_round(dataloader=self.test_loader)
@@ -300,4 +289,4 @@ class FederatedMultimodalClient:
         return self.evaluate_round(dataloader=self.val_loader)
 
     def __str__(self) -> str:
-        return f"FederatedMultimodalClient(client_id={self.client_id}, current_round={self.current_round}, total_rounds={self.total_rounds}, current_epoch={self.current_epoch}, total_epochs={self.total_epochs}, best_model_path={self.best_model_path}, best_model_score={self.best_model_score}, best_model_epoch={self.best_model_epoch}, best_model_round={self.best_model_round})"
+        return f"FederatedMultimodalClient(client_id={self.client_id}, current_round={self.current_round}, current_epoch={self.current_epoch}, total_epochs={self.total_epochs}, best_model_path={self.best_model_path}, best_model_score={self.best_model_score}, best_model_epoch={self.best_model_epoch}, best_model_round={self.best_model_round})"

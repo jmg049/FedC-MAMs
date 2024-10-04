@@ -95,6 +95,12 @@ class FederatedCongruentCMAMServer:
 
         return aggregated_params
 
+    def fed_prox(
+        self, client_results: List[FederatedResult]
+    ) -> Dict[str, torch.Tensor]:
+        aggregated_params = {}
+        return aggregated_params
+
     def aggregate_models(
         self, client_results: List[FederatedResult]
     ) -> Dict[str, torch.Tensor]:
@@ -120,7 +126,7 @@ class FederatedCongruentCMAMServer:
             )
             metric_recorder.update_from_dict(eval_results)
         return metric_recorder.get_average_metrics(
-            save_to=self.config.server_config.logging_config.metrics_path.format_map(
+            save_to=self.config.server_config.logging.metrics_path.format_map(
                 SafeDict(round=str(self.current_round))
             ),
             epoch="post_aggregation",
@@ -220,7 +226,7 @@ class FederatedCongruentCMAMServer:
                 del epoch_metric_recorder.results["ConfusionMatrix"]
 
             validation_metrics = epoch_metric_recorder.get_average_metrics(
-                save_to=self.config.server_config.logging_config.metrics_path.format_map(
+                save_to=self.config.server_config.logging.metrics_path.format_map(
                     SafeDict(round=str(self.current_round))
                 ),
                 epoch="pre_aggregation",
@@ -236,7 +242,7 @@ class FederatedCongruentCMAMServer:
             model_state_dict = self.global_cmam.state_dict()
             os.makedirs(
                 os.path.dirname(
-                    self.config.server_config.logging_config.model_output_path.format_map(
+                    self.config.server_config.logging.model_output_path.format_map(
                         SafeDict(round=str(self.current_round))
                     )
                 ),
@@ -244,12 +250,12 @@ class FederatedCongruentCMAMServer:
             )
             torch.save(
                 model_state_dict,
-                self.config.server_config.logging_config.model_output_path.format_map(
+                self.config.server_config.logging.model_output_path.format_map(
                     SafeDict(round=str(self.current_round))
                 ).replace(".pth", f"_{epoch}.pth"),
             )
 
-            p = self.config.server_config.logging_config.model_output_path.format_map(
+            p = self.config.server_config.logging.model_output_path.format_map(
                 SafeDict(round=str(self.current_round))
             ).replace(".pth", f"_{epoch}.pth")
 
@@ -261,26 +267,22 @@ class FederatedCongruentCMAMServer:
                 )  # Number of epochs to wait for improvement
                 min_delta = self.config.server_config.early_stopping_min_delta
                 # Determine whether we are minimizing or maximizing the metric
-                if self.config.server_config.logging_config.save_metric == "loss":
+                if self.config.server_config.logging.save_metric == "loss":
                     improvement = (
-                        best_metrics[
-                            self.config.server_config.logging_config.save_metric
-                        ]
+                        best_metrics[self.config.server_config.logging.save_metric]
                         - validation_metrics[
-                            self.config.server_config.logging_config.save_metric
+                            self.config.server_config.logging.save_metric
                         ]
                     )
                     print_fn(
-                        f"Improvement: {improvement}, Best: {best_metrics[self.config.server_config.logging_config.save_metric]}, Current: {validation_metrics[self.config.server_config.logging_config.save_metric]}"
+                        f"Improvement: {improvement}, Best: {best_metrics[self.config.server_config.logging.save_metric]}, Current: {validation_metrics[self.config.server_config.logging.save_metric]}"
                     )
                 else:
                     improvement = (
                         validation_metrics[
-                            self.config.server_config.logging_config.save_metric
+                            self.config.server_config.logging.save_metric
                         ]
-                        - best_metrics[
-                            self.config.server_config.logging_config.save_metric
-                        ]
+                        - best_metrics[self.config.server_config.logging.save_metric]
                     )  # Improvement means increase
 
                 if epoch > patience:
@@ -292,7 +294,7 @@ class FederatedCongruentCMAMServer:
 
                         break
 
-            if self.config.server_config.logging_config.save_metric == "loss":
+            if self.config.server_config.logging.save_metric == "loss":
                 if validation_metrics["loss"] < best_eval_loss:
                     print_fn(f"New best model found at epoch {epoch}")
                     best_eval_epoch = epoch
@@ -300,25 +302,25 @@ class FederatedCongruentCMAMServer:
                     best_metrics = validation_metrics
             else:
                 target_metric = validation_metrics[
-                    self.config.server_config.logging_config.save_metric
+                    self.config.server_config.logging.save_metric
                 ]
                 if (
                     target_metric
-                    > best_metrics[self.config.server_config.logging_config.save_metric]
+                    > best_metrics[self.config.server_config.logging.save_metric]
                 ):
                     print_fn(f"New best model found at epoch {epoch}")
                     best_eval_epoch = epoch
                     best_metrics = validation_metrics
 
         print_fn(
-            f"Best eval epoch was {best_eval_epoch} with a {self.config.server_config.logging_config.save_metric} of {best_metrics[self.config.server_config.logging_config.save_metric]}"
+            f"Best eval epoch was {best_eval_epoch} with a {self.config.server_config.logging.save_metric} of {best_metrics[self.config.server_config.logging.save_metric]}"
         )
 
         print_fn("Global Model Training complete: Round: ", self.current_round)
 
         ## load the best model
         model_state_dict = torch.load(
-            self.config.server_config.logging_config.model_output_path.format_map(
+            self.config.server_config.logging.model_output_path.format_map(
                 SafeDict(round=str(self.current_round))
             ).replace(".pth", f"_{best_eval_epoch}.pth"),
             weights_only=True,
@@ -383,7 +385,7 @@ class FederatedCongruentCMAMServer:
             )
 
             os.makedirs(
-                self.config.server_config.logging_config.metrics_path.format_map(
+                self.config.server_config.logging.metrics_path.format_map(
                     SafeDict(round=str(self.current_round))
                 ),
                 exist_ok=True,
@@ -391,7 +393,7 @@ class FederatedCongruentCMAMServer:
 
             with open(
                 os.path.join(
-                    self.config.server_config.logging_config.metrics_path.format_map(
+                    self.config.server_config.logging.metrics_path.format_map(
                         SafeDict(round=str(self.current_round))
                     ),
                     f"round_{round}_best_metrics.json",
@@ -402,7 +404,7 @@ class FederatedCongruentCMAMServer:
                 f.write(json_str)
 
             # Check if this round's performance is the best so far
-            save_metric = self.config.server_config.logging_config.save_metric
+            save_metric = self.config.server_config.logging.save_metric.replace("_", "")
             current_metric_value = global_performance[save_metric]
             best_metric_value = (
                 best_global_performance[save_metric]
@@ -422,7 +424,7 @@ class FederatedCongruentCMAMServer:
 
                 # Create the directory if it doesn't exist
                 output_dir = os.path.dirname(
-                    self.config.server_config.logging_config.model_output_path
+                    self.config.server_config.logging.model_output_path
                 )
                 os.makedirs(output_dir, exist_ok=True)
 
@@ -447,8 +449,25 @@ class FederatedCongruentCMAMServer:
                     )
                     break
 
+        print_fn("Training complete")
+        print_fn(f"Best round: {best_round} with {save_metric} of {best_metric_value}")
+        print_all_metrics_tables(
+            metrics=best_global_performance,
+            console=None,
+            max_cols_per_row=16,
+            max_width=20,
+        )
+
         # Load the best model for final evaluation
         self.global_cmam.load_state_dict(best_global_model_state)
+
+        model_path = self.config.server_config.logging.model_output_path.format_map(
+            SafeDict(round=str(""))
+        )
+
+        model_path = model_path.replace(".pth", "_best.pth")
+        torch.save(best_global_model_state, model_path)
+
         final_test_results = self.evaluate_global_model(
             self.global_test_data, criterion
         )
@@ -469,3 +488,6 @@ class FederatedCongruentCMAMServer:
 
     def __str__(self) -> str:
         return f"FederatedCongruentServer: {self.global_cmam}\nAggregation Strategy: {self.aggregation_strategy}\nNumber of Clients: {self.num_clients}\nDevice: {self.device}\nCurrent Round: {self.current_round}"
+
+    def __repr__(self) -> str:
+        return self.__str__()
