@@ -219,8 +219,8 @@ class CMAMLoss(nn.Module):
         originals: Optional[torch.Tensor] = None,
         reconstructed: Optional[torch.Tensor] = None,
         forward_func: Optional[Callable] = None,
-        cls_logits: Optional[torch.Tensor] = None,
-        cls_labels: Optional[torch.Tensor] = None,
+        cls_logits: Optional[list[torch.Tensor] | torch.Tensor] = None,
+        cls_labels: Optional[list[torch.Tensor] | torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Compute the total loss and individual loss components.

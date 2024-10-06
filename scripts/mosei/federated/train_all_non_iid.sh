@@ -6,12 +6,12 @@ CONFIGS=("configs/mosei/federated/mosei_federated_multimodal_non_iid_01.yaml" "c
 for run_id in $(seq 1 $RUNS); do
 
     for config in "${CONFIGS[@]}"; do
-        echo "Running" $config "with run_id" $run_id
-        if [ ! -f $config ]; then
+        echo "Running" "$config" "with run_id" "$run_id"
+        if [ ! -f "$config" ]; then
             echo "File not found!"
         fi
 
-        python train_federated.py --config $config --run_id $run_id
+        python train_federated.py --config "$config" --run_id "$run_id"
     done
 
 done

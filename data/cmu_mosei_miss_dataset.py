@@ -40,9 +40,9 @@ class cmumoseimissdataset(Dataset):
         self,
         data_fp: Union[str, Path, os.PathLike],
         split: str,
-        is_cmam_dataset: tuple[bool, str] = (False, ""),
         target_modality: Modality = Modality.MULTIMODAL,
         labels_key: str = "classification_labels",
+        selected_missing_types: list[str] = None,  # New parameter
         **kwargs,
     ):
         super().__init__()
@@ -57,7 +57,6 @@ class cmumoseimissdataset(Dataset):
             data = pickle.load(f)
 
         assert labels_key in data[split], f"Invalid labels_key: {labels_key}"
-        self.is_cmam_dataset = is_cmam_dataset
 
         data_split = data[split]
         self.all_A = data_split["audio"]
@@ -66,35 +65,23 @@ class cmumoseimissdataset(Dataset):
         self.label = data_split[labels_key]
         self.label = np.array(self.label, dtype=int64)
 
-        ## In the C-MAM case, we only want to look at a particular missing type, that is the target_miss_type
-        if is_cmam_dataset[0]:
-            target_miss_type = is_cmam_dataset[1]
-            assert (
-                target_miss_type in MASK_LOOKUP.values()
-            ), f"Invalid target_miss_type: {target_miss_type}"
-            self.target_miss_type = target_miss_type
+        if split != "train":  # val && tst
+            if selected_missing_types is None:
+                selected_missing_types = list(INDEX_LOOKUP.keys())
+            valid_missing_indices = [
+                INDEX_LOOKUP[miss_type] for miss_type in selected_missing_types
+            ]
+            valid_missing_indices = [
+                [int(i) for i in m_index.split(",")]
+                for m_index in valid_missing_indices
+            ]
 
-            m_index = INDEX_LOOKUP[target_miss_type]
-            m_index = [int(i) for i in m_index.split(",")]
-            self.missing_index = torch.tensor([m_index] * len(self.label)).long()
-            self.miss_type = [target_miss_type] * len(self.label)
+            self.selected_missing_types = selected_missing_types
 
-        elif split != "train":  # val && tst
             self.missing_index = torch.tensor(
-                [
-                    [1, 0, 0],  # AZZ
-                    [0, 1, 0],  # ZVZ
-                    [0, 0, 1],  # ZZL
-                    [1, 1, 0],  # AVZ
-                    [1, 0, 1],  # AZL
-                    [0, 1, 1],  # ZVL
-                    [1, 1, 1],  # AVL
-                ]
-                * len(self.label)
+                valid_missing_indices * len(self.label)
             ).long()
-            self.miss_type = ["azz", "zvz", "zzl", "avz", "azl", "zvl", "AVL"] * len(
-                self.label
-            )
+            self.miss_type = selected_missing_types * len(self.label)
 
         else:  # trn
             self.missing_index = [
@@ -105,7 +92,7 @@ class cmumoseimissdataset(Dataset):
                 [1, 0, 1],  # AZL
                 [0, 1, 1],  # ZVL
             ]
-            self.miss_type = ["azz", "zvz", "zzl", "avz", "azl", "zvl"]
+            self.miss_type = list(INDEX_LOOKUP.keys())
         if not isinstance(target_modality, Modality):
             target_modality = Modality.from_str(target_modality)
         assert (
@@ -122,11 +109,11 @@ class cmumoseimissdataset(Dataset):
         self.manual_collate_fn = True
 
     def __str__(self) -> str:
-        return f"CMU-MOSEI Missing Dataset ({self.split}) - Target Modality: {self.target_modality} - CMAM? {self.is_cmam_dataset} - {len(self)} samples"
+        return f"CMU-MOSEI Missing Dataset ({self.split}) - Target Modality: {self.target_modality} - {len(self)} samples"
 
     def __getitem__(self, index):
         if self.split != "train":
-            feat_idx = index // 7  # totally 7 missing types
+            feat_idx = index // len(self.selected_missing_types)
             missing_index = self.missing_index[index]
             miss_type = self.miss_type[index]
         else:
@@ -140,37 +127,37 @@ class cmumoseimissdataset(Dataset):
             miss_type = self.miss_type[_miss_i]
         label = torch.tensor(self.label[feat_idx])
 
-        A_feat = torch.from_numpy(self.all_A[feat_idx][()]).float()
-        V_feat = torch.from_numpy(self.all_V[feat_idx][()]).float()
-        L_feat = torch.from_numpy(self.all_L[feat_idx][()]).float()
+        A = torch.from_numpy(self.all_A[feat_idx][()]).float()
+        V = torch.from_numpy(self.all_V[feat_idx][()]).float()
+        T = torch.from_numpy(self.all_L[feat_idx][()]).float()
 
         match self.target_modality:
             case Modality.AUDIO:
                 return {
-                    "A_feat": A_feat,
+                    Modality.AUDIO: A,
                     "label": label,
                     "missing_index": missing_index,
                     "miss_type": miss_type,
                 }
             case Modality.TEXT:
                 return {
-                    "L_feat": L_feat,
+                    Modality.TEXT: T,
                     "label": label,
                     "missing_index": missing_index,
                     "miss_type": miss_type,
                 }
             case Modality.VIDEO:
                 return {
-                    "V_feat": V_feat,
+                    Modality.VIDEO: V,
                     "label": label,
                     "missing_index": missing_index,
                     "miss_type": miss_type,
                 }
             case Modality.MULTIMODAL:
                 return {
-                    "A_feat": A_feat,
-                    "V_feat": V_feat,
-                    "L_feat": L_feat,
+                    Modality.AUDIO: A,
+                    Modality.VIDEO: V,
+                    Modality.TEXT: T,
                     "label": label,
                     "missing_index": missing_index,
                     "miss_type": miss_type,
@@ -200,13 +187,13 @@ class cmumoseimissdataset(Dataset):
         return mean, std
 
     def collate_fn(self, batch):
-        A = [sample["A_feat"] for sample in batch]
-        V = [sample["V_feat"] for sample in batch]
-        L = [sample["L_feat"] for sample in batch]
+        A = [sample["A"] for sample in batch]
+        V = [sample["V"] for sample in batch]
+        T = [sample["T"] for sample in batch]
         lengths = torch.tensor([len(sample) for sample in A]).long()
         A = pad_sequence(A, batch_first=True, padding_value=0)
         V = pad_sequence(V, batch_first=True, padding_value=0)
-        L = pad_sequence(L, batch_first=True, padding_value=0)
+        T = pad_sequence(T, batch_first=True, padding_value=0)
         label = torch.tensor([sample["label"] for sample in batch])
         missing_index = torch.cat(
             [sample["missing_index"].unsqueeze(0) for sample in batch], axis=0
@@ -216,7 +203,7 @@ class cmumoseimissdataset(Dataset):
         match self.target_modality:
             case Modality.AUDIO:
                 return {
-                    "A_feat": A,
+                    Modality.AUDIO: A,
                     "label": label,
                     "lengths": lengths,
                     "missing_index": missing_index,
@@ -224,7 +211,7 @@ class cmumoseimissdataset(Dataset):
                 }
             case Modality.TEXT:
                 return {
-                    "L_feat": L,
+                    Modality.TEXT: T,
                     "label": label,
                     "lengths": lengths,
                     "missing_index": missing_index,
@@ -232,7 +219,7 @@ class cmumoseimissdataset(Dataset):
                 }
             case Modality.VIDEO:
                 return {
-                    "V_feat": V,
+                    Modality.VIDEO: V,
                     "label": label,
                     "lengths": lengths,
                     "missing_index": missing_index,
@@ -240,9 +227,9 @@ class cmumoseimissdataset(Dataset):
                 }
             case Modality.MULTIMODAL:
                 return {
-                    "A_feat": A,
-                    "V_feat": V,
-                    "L_feat": L,
+                    Modality.AUDIO: A,
+                    Modality.VIDEO: V,
+                    Modality.TEXT: T,
                     "label": label,
                     "lengths": lengths,
                     "missing_index": missing_index,

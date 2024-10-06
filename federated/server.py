@@ -1,20 +1,26 @@
-from collections import defaultdict
-from copy import deepcopy
 import json
 import os
+from collections import defaultdict
+from copy import deepcopy
+from typing import Any, Dict, List, Literal
+
 import numpy as np
 import torch
-from torch.optim import Optimizer
 from torch.nn import Module
+from torch.optim import Optimizer
 from torch.utils.data import DataLoader
-from typing import Any, List, Dict, Literal
-
 from tqdm import tqdm
+
 from config.federated_config import FederatedConfig
 from federated import FederatedResult
 from federated.client import FederatedMultimodalClient
 from models import MultimodalModelProtocol
-from utils import SafeDict, print_all_metrics_tables, get_logger
+from utils import (
+    SafeDict,
+    display_training_metrics,
+    display_validation_metrics,
+    get_logger,
+)
 
 logger = get_logger()
 
@@ -135,7 +141,6 @@ class FederatedCongruentServer:
         *,
         print_fn: callable = print,
     ) -> Dict[str, Any]:
-
         self.current_round += 1
 
         ## local training first
@@ -157,7 +162,6 @@ class FederatedCongruentServer:
                 ascii=True,
                 total=len(self.global_train_data),
             ):
-
                 train_results = self.global_model.train_step(
                     batch=batch,
                     optimizer=optimizer,
@@ -166,18 +170,11 @@ class FederatedCongruentServer:
                 )
                 epoch_metric_recorder.update_from_dict(train_results)
 
-            train_cm = epoch_metric_recorder.get("ConfusionMatrix", default=None)
-            if train_cm is not None:
-                train_cm = np.sum(train_cm, axis=0)
-                tqdm.write(str(train_cm))
-                del epoch_metric_recorder.results["ConfusionMatrix"]
             global_train_metrics = epoch_metric_recorder.get_average_metrics()
             print_fn("Global model training metrics")
-            print_all_metrics_tables(
+            display_training_metrics(
                 metrics=global_train_metrics,
                 console=None,
-                max_cols_per_row=16,
-                max_width=20,
             )
 
             logger.info(f"Finished training global model for epoch {epoch}")
@@ -201,12 +198,6 @@ class FederatedCongruentServer:
                 )
                 epoch_metric_recorder.update_from_dict(val_results)
 
-            validation_cm = epoch_metric_recorder.get("ConfusionMatrix", default=None)
-            if validation_cm is not None:
-                validation_cm = np.sum(validation_cm, axis=0)
-                tqdm.write(str(validation_cm))
-                del epoch_metric_recorder.results["ConfusionMatrix"]
-
             validation_metrics = epoch_metric_recorder.get_average_metrics(
                 save_to=self.config.server_config.logging.metrics_path.format_map(
                     SafeDict(round=str(self.current_round))
@@ -214,11 +205,9 @@ class FederatedCongruentServer:
                 epoch="pre_aggregation",
             )
             print_fn("Global model validation metrics")
-            print_all_metrics_tables(
+            display_validation_metrics(
                 metrics=validation_metrics,
                 console=None,
-                max_cols_per_row=16,
-                max_width=20,
             )
 
             model_state_dict = self.global_model.state_dict()
@@ -236,10 +225,10 @@ class FederatedCongruentServer:
                     SafeDict(round=str(self.current_round))
                 ).replace(".pth", f"_{epoch}.pth"),
             )
-            
-            print_fn(f"Saving model at epoch {epoch} to disk to {self.config.server_config.logging.model_output_path.format_map(
-                    SafeDict(round=str(self.current_round))
-                ).replace(".pth", f"_{epoch}.pth")}")
+
+            print_fn(
+                f"Saving model at epoch {epoch} to disk to {self.config.server_config.logging.model_output_path.format_map(SafeDict(round=str(self.current_round))).replace('.pth', f'_{epoch}.pth')}"
+            )
 
             p = self.config.server_config.logging.model_output_path.format_map(
                 SafeDict(round=str(self.current_round))
@@ -288,12 +277,14 @@ class FederatedCongruentServer:
                     best_metrics = validation_metrics
             else:
                 target_metric = validation_metrics[
-                    self.config.server_config.logging.save_metric.replace("_", "")
+                    self.config.server_config.logging.save_metric.replace("_", "", 1)
                 ]
                 if (
                     target_metric
                     > best_metrics[
-                        self.config.server_config.logging.save_metric.replace("_", "")
+                        self.config.server_config.logging.save_metric.replace(
+                            "_", "", 1
+                        )
                     ]
                 ):
                     print_fn(f"New best model found at epoch {epoch}")
@@ -301,10 +292,10 @@ class FederatedCongruentServer:
                     best_metrics = validation_metrics
 
         print_fn(
-            f"Best eval epoch was {best_eval_epoch} with a {self.config.server_config.logging.save_metric.replace('_', '')} of {best_metrics[self.config.server_config.logging.save_metric.replace('_','')]}"
+            f"Best eval epoch was {best_eval_epoch} with a {self.config.server_config.logging.save_metric.replace('_', '', 1)} of {best_metrics[self.config.server_config.logging.save_metric.replace('_','',1)]}"
         )
         logger.info(
-            f"Best eval epoch was {best_eval_epoch} with a {self.config.server_config.logging.save_metric.replace('_', '')} of {best_metrics[self.config.server_config.logging.save_metric.replace('_','')]}"
+            f"Best eval epoch was {best_eval_epoch} with a {self.config.server_config.logging.save_metric.replace('_', '', 1)} of {best_metrics[self.config.server_config.logging.save_metric.replace('_','', 1)]}"
         )
 
         print_fn("Global Model Training complete: Round: %d", self.current_round)
@@ -389,11 +380,9 @@ class FederatedCongruentServer:
 
             global_performance = round_results["global_model_performance"]
             print_fn("Global model performance after aggregation:")
-            print_all_metrics_tables(
+            display_validation_metrics(
                 metrics=global_performance,
                 console=None,
-                max_cols_per_row=16,
-                max_width=20,
             )
 
             os.makedirs(
@@ -403,20 +392,22 @@ class FederatedCongruentServer:
                 exist_ok=True,
             )
 
-            with open(
-                os.path.join(
-                    self.config.server_config.logging.metrics_path.format_map(
-                        SafeDict(round=str(self.current_round))
-                    ),
-                    f"round_{round}_best_metrics.json",
-                ),
-                "w",
-            ) as f:
-                json_str = json.dumps(global_performance, indent=4)
-                f.write(json_str)
+            # with open(
+            #     os.path.join(
+            #         self.config.server_config.logging.metrics_path.format_map(
+            #             SafeDict(round=str(self.current_round))
+            #         ),
+            #         f"round_{round}_best_metrics.json",
+            #     ),
+            #     "w",
+            # ) as f:
+            #     json_str = json.dumps(global_performance, indent=4)
+            #     f.write(json_str)
 
             # Check if this round's performance is the best so far
-            save_metric = self.config.server_config.logging.save_metric.replace("_", "")
+            save_metric = self.config.server_config.logging.save_metric.replace(
+                "_", "", 1
+            )
             current_metric_value = global_performance[save_metric]
             best_metric_value = (
                 best_global_performance[save_metric]
@@ -469,11 +460,9 @@ class FederatedCongruentServer:
                     break
 
         print_fn(f"Best round: {best_round} with performance:")
-        print_all_metrics_tables(
+        display_validation_metrics(
             metrics=best_global_performance,
             console=None,
-            max_cols_per_row=16,
-            max_width=20,
         )
 
         # Load the best model for final evaluation
@@ -482,7 +471,7 @@ class FederatedCongruentServer:
         ## save the best model for future use
         model_path = self.config.server_config.logging.model_output_path.format_map(
             SafeDict(round="")
-        ) ## empty string to save the best model to the /global/ directory
+        )  ## empty string to save the best model to the /global/ directory
 
         model_path = model_path.replace(".pth", "_best.pth")
         torch.save(self.global_model.state_dict(), model_path)
@@ -492,11 +481,9 @@ class FederatedCongruentServer:
         )
 
         print_fn("Final test results for the best global model:")
-        print_all_metrics_tables(
+        display_validation_metrics(
             metrics=final_test_results,
             console=None,
-            max_cols_per_row=16,
-            max_width=20,
         )
 
         return {

@@ -1,16 +1,17 @@
-from functools import partial
+import importlib
 import json
 import os
-from typing import Dict, Any, List, Callable, Union
-import yaml
-import importlib
-import torch
-from logging import getLogger
-
 from collections import OrderedDict
+from functools import partial
+from typing import Any, Callable, Dict, List, Union
 
-logger = getLogger(__name__)
-logger.setLevel("INFO")
+import numpy as np
+import torch
+import yaml
+
+from utils import get_logger
+
+logger = get_logger()
 
 
 class MetricRecorder:
@@ -75,7 +76,7 @@ class MetricRecorder:
     def update_from_dict(
         self,
         results: Dict[str, float],
-    ):
+    ) -> None:
         for metric_name in results.keys():
             if metric_name not in self.results:
                 self.results[metric_name] = []
@@ -88,13 +89,16 @@ class MetricRecorder:
         return m
 
     def get_average_metrics(self, save_to: str = None, epoch=-1) -> Dict[str, float]:
-        exclude_prefixes = ["ConfusionMatrix", "classification_report"]
+        exclude_postfixes = ["ConfusionMatrix", "classification_report"]
 
         m = {
             k: v[0] if isinstance(v, (list, tuple)) and len(v) == 1 else v
             for k, v in self.results.items()
-            if not any(k.startswith(prefix) for prefix in exclude_prefixes)
+            if not any(k.endswith(prefix) for prefix in exclude_postfixes)
         }
+
+        cms = {k: v for k, v in self.results.items() if "ConfusionMatrix" in k}
+        crs = {k: v for k, v in self.results.items() if "classification_report" in k}
 
         results = OrderedDict()
         for metric, values in m.items():
@@ -114,13 +118,23 @@ class MetricRecorder:
         # save each metric to a file: epoch.json
         if save_to is not None:
             os.makedirs(save_to, exist_ok=True)
-            results = {k: float(v) for k, v in results.items()}
+            results = {
+                k: float(v) for k, v in results.items() if "ConfusionMatrix" not in k
+            }
             json_str = json.dumps(results, indent=4)
             with open(os.path.join(save_to, f"{epoch}.json"), "w") as f:
                 f.write(json_str)
+            logger.info(f"Saved metrics to {os.path.join(save_to, f'{epoch}.json')}")
+
+        ## add confusion matrix and classification report to the results
+        if len(cms) > 0:
+            for k, v in cms.items():
+                if len(v) > 0:
+                    results[k] = np.sum(v, axis=0)
+
         return results
 
-    def reset(self):
+    def reset(self) -> None:
         for metric in self.results:
             self.results[metric] = []
 

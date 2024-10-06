@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import yaml
 from modalities import Modality
-
+from torch.nn import Module
 from config import (
     BaseConfig,
     ExperimentConfig,
@@ -16,6 +16,7 @@ from config import (
     Config,
     resolve_criterion,
 )
+from config.config import resolve_optimizer
 
 
 def cmam_model_constructor(loader, node):
@@ -44,6 +45,7 @@ class CMAMModelConfig(BaseConfig):
     assoc_use_bn: bool = False
     fusion_fn: str = "concat"
     grad_clip: float = 0.0
+    binarize: bool = False
 
     def __post_init__(self):
         if self.fusion_fn not in ["concat", "sum", "mean"]:
@@ -61,6 +63,7 @@ class CMAMModelConfig(BaseConfig):
             "assoc_use_bn": self.assoc_use_bn,
             "fusion_fn": self.fusion_fn,
             "grad_clip": self.grad_clip,
+            "binarize": self.binarize,
         }
 
 
@@ -77,9 +80,9 @@ class DualCMAMModelConfig(BaseConfig):
     input_modality: Modality
     target_modality_one: Modality
     target_modality_two: Modality
-    attention_heads: int = 2
     dropout: float = 0.0
     grad_clip: float = 0.0
+    binarize: bool = False
 
     def __dict__(self):
         return {
@@ -90,9 +93,9 @@ class DualCMAMModelConfig(BaseConfig):
             "shared_encoder_output_size": self.shared_encoder_output_size,
             "target_modality_one_embd_size": self.target_modality_one_embd_size,
             "target_modality_two_embd_size": self.target_modality_two_embd_size,
-            "attention_heads": self.attention_heads,
             "dropout": self.dropout,
             "grad_clip": self.grad_clip,
+            "binarize": self.binarize,
         }
 
 
@@ -170,6 +173,52 @@ class CMAMConfig(Config):
             prediction_metrics=prediction_metrics,
             rec_metrics=rec_metrics,
         )
+
+    def _get_optimizer(
+        self, model: Module, optim_kwargs: Dict[str | Dict[str, Any], Any]
+    ):
+        match self.cmam.name.lower():
+            case "basiccmam":
+                optimizer = self.get_optimizer(
+                    model=model,
+                )
+            case "dualcmam":
+                if (
+                    "target_modality_one_kwargs" in optim_kwargs
+                    and "target_modality_two_kwargs" in optim_kwargs
+                ):
+                    input_encoder_optim_kwargs = optim_kwargs["input_encoder_kwargs"]
+                    # attention_optim_kwargs = optim_kwargs["attention_kwargs"]
+
+                    target_modality_one_optim_kwargs = optim_kwargs[
+                        "target_modality_one_kwargs"
+                    ]
+                    target_modality_two_optim_kwargs = optim_kwargs[
+                        "target_modality_two_kwargs"
+                    ]
+                    optimizer_class = resolve_optimizer(self.training.optimizer)
+                    optimizer = optimizer_class(
+                        [
+                            {
+                                "params": model.input_encoder.parameters(),
+                                **input_encoder_optim_kwargs,
+                            },
+                            {
+                                "params": model.decoders[0].parameters(),
+                                **target_modality_one_optim_kwargs,
+                            },
+                            {
+                                "params": model.decoders[1].parameters(),
+                                **target_modality_two_optim_kwargs,
+                            },
+                        ]
+                    )
+                else:
+                    raise ValueError(
+                        "Missing target modality kwargs for dual CMAM model"
+                    )
+
+        return optimizer
 
     def get_criterion(self, criterion_name: str, criterion_kwargs: Dict[str, Any] = {}):
         try:

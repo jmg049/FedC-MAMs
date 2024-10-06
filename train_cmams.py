@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import os
 import subprocess
 import time
@@ -12,7 +13,6 @@ from rich.console import Console
 from tqdm import tqdm
 
 from config import CMAMConfig, resolve_model_name
-from config.federated_cmam_config import FederatedCMAMConfig
 from data import build_dataloader
 from missing_index import missing_pattern
 from models import CMAMProtocol, MultimodalModelProtocol, check_protocol_compliance
@@ -21,11 +21,14 @@ from utils import (
     call_latex_to_image,
     clean_checkpoints,
     prepare_path,
-    print_all_metrics_tables,
+    display_training_metrics,
+    display_validation_metrics,
+    print_gpu_memory,
 )
-from utils.logger import get_logger
+from utils.logger import configure_logger, get_logger
 from utils.metric_recorder import MetricRecorder
-
+import torch
+torch.cuda.empty_cache()
 add_modality("VIDEO")
 
 console = Console()
@@ -33,23 +36,9 @@ console = Console()
 # Set to False if your terminal does not support rendering an image
 RENDER_LOSS_FN = False
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-c", "--config", type=str, required=True, help="Path to config file"
-    )
-    parser.add_argument("--run_id", type=int, default=-1, help="Run ID")
-    args = parser.parse_args()
 
-    try:
-        config = CMAMConfig.load(args.config, args.run_id)
-    except Exception as e:
-        console.print(f"Error loading config:\n{e}")
-        exit(1)
-
-    logger_path = config.logging.log_path
-    logger = get_logger(logger_path)
-    console.print(f"Initalized logger. Logging to {logger_path}")
+def main(config: CMAMConfig) -> None:
+    logger = get_logger()
     result_dir = config.logging.metrics_path
     console.print(f"Results will be saved to {result_dir}")
 
@@ -59,8 +48,6 @@ if __name__ == "__main__":
     run_id = config.experiment.run_id
 
     os.makedirs(result_dir, exist_ok=True)
-
-    verbose = config.experiment.debug
 
     dataloaders = {
         split: build_dataloader(
@@ -83,18 +70,18 @@ if __name__ == "__main__":
 
     dataset_size = len(train_dataset.dataset)
     logger.info("The number of training samples = %d" % dataset_size)
+    console.print(f"Training dataset {train_dataset.dataset}")
     logger.info("The number of validation samples = %d" % len(val_dataset.dataset))
-    if do_test:
-        logger.info("The number of test samples = %d" % len(tst_dataset.dataset))
     console.print(f"Validation dataset {val_dataset.dataset}")
 
-    total_iters = epochs * dataset_size
-
-    console.print("Total iterations: ", total_iters)
-    logger.info("Total iterations: %d" % total_iters)
+    if do_test:
+        logger.info("The number of test samples = %d" % len(tst_dataset.dataset))
+        console.print(f"Test dataset {tst_dataset.dataset}")
 
     model_cls = resolve_model_name(config.model.name)
-    model = model_cls(**config.model.kwargs)
+    model = model_cls(
+        **config.model.kwargs, metric_recorder=MetricRecorder(config.prediction_metrics)
+    )
 
     check_protocol_compliance(model, MultimodalModelProtocol)
 
@@ -106,7 +93,13 @@ if __name__ == "__main__":
 
     model.to(device)
 
-    total_iters = 0  # the total number of training iterations
+    
+
+
+    logger.info(f"Model loaded from {pretrained_path}")
+    console.print(f"Model loaded from {pretrained_path}")
+
+    logger.info(f"Classification Model\n{model}")
 
     best_eval_epoch = -1  # record the best eval epoch
     best_metrics = defaultdict(lambda: 0.0)
@@ -127,7 +120,6 @@ if __name__ == "__main__":
     cmam_cfg = config.cmam
 
     input_encoder_info = cmam_cfg.input_encoder_info
-    cmam_name = cmam_cfg.name
 
     metric_recorder = MetricRecorder(config.prediction_metrics)
 
@@ -138,12 +130,16 @@ if __name__ == "__main__":
         metric_recorder=metric_recorder,
         **cmam_cfg.__dict__(),
     )
-    check_protocol_compliance(cmam, CMAMProtocol)
-    # cmam.set_predictions_metric_recorder(MetricRecorder(config.prediction_metrics))
-    # cmam.set_rec_metric_recorder(MetricRecorder(config.rec_metrics))
 
-    # kaiming_init(cmam)
+
+    check_protocol_compliance(cmam, CMAMProtocol)
+
     criterion_kwargs = config.training.criterion_kwargs
+
+    ## print the GPU memory
+    console.print(
+        f"Memory allocated: {torch.cuda.memory_allocated() / 1024 ** 3:.2f} GB"
+    )
 
     ## calculate x-dim and z-dim for MI loss
     if "mi_weight" in criterion_kwargs and criterion_kwargs["mi_weight"] > 0:
@@ -158,15 +154,15 @@ if __name__ == "__main__":
 
     cmam_criterion = config.get_criterion(config.training.criterion, criterion_kwargs)
     cmam.to(device)
+
+    
+
     console.print("CMAM model created")
-    logger.info(f"CMAM model created\n{cmam}")
     console.print(f"{cmam}")
-    params = (
-        list(cmam.parameters(), cmam_criterion.mi_estimator.parameters())
-        if config.training.criterion_kwargs.get("mi_weight", 0) > 0
-        else list(cmam.parameters())
-    )
-    optimizer = config.get_optimizer(cmam)
+
+    logger.info(f"CMAM model created\n{cmam}")
+
+    optimizer = config._get_optimizer(cmam, optim_kwargs=config.training.optim_kwargs)
 
     if config.training.scheduler is not None:
         scheduler = config.get_scheduler(optimizer=optimizer)
@@ -189,14 +185,7 @@ if __name__ == "__main__":
     ):
         cmam.reset_metric_recorders()
 
-        epoch_start_time = time.time()  # timer for entire epoch
-        iter_data_time = time.time()  # timer for data loading per iteration
-
-        epoch_iter = 0  # the number of training iterations in current epoch, reset to 0 every epoch
-
-        # epoch_metric_recorder = model.metric_recorder.clone()
         epoch_rec_metric_recorder = cmam.metric_recorder.clone()
-        # epoch_cls_metric_recorder = cmam.predictions_metric_recorder.clone()
 
         for i, data in tqdm(
             enumerate(train_dataset),
@@ -205,10 +194,8 @@ if __name__ == "__main__":
             colour="red",
             total=len(train_dataset),
         ):
-            iter_start_time = time.time()  # timer for computation per iteration
-            total_iters += 1
-            epoch_iter += batch_size
-
+            
+            
             data["missing_index"] = mp[batch_size * i : batch_size * (i + 1), :]
 
             results = cmam.train_step(
@@ -220,37 +207,19 @@ if __name__ == "__main__":
                 trained_model=model,
             )
             epoch_rec_metric_recorder.update_from_dict(results)
-            # epoch_cls_metric_recorder.update_from_dict(results["cls_metrics"])
-            iter_data_time = time.time()
-
-        train_cm = epoch_rec_metric_recorder.get("ConfusionMatrix", default=None)
-        if train_cm is not None:
-            # train_cm = np.sum(train_cm, axis=0)
-            # tqdm.write(str(train_cm))
-            del epoch_rec_metric_recorder.results["ConfusionMatrix"]
-
-        # train_metrics = epoch_metric_recorder.get_average_metrics()
-        train_rec_metrics = epoch_rec_metric_recorder.get_average_metrics()
-        # train_cls_metrics = epoch_cls_metric_recorder.get_average_metrics()
+        train_metrics = epoch_rec_metric_recorder.get_average_metrics()
 
         console.rule("Training Metrics")
-        print_all_metrics_tables(
-            metrics=train_rec_metrics,
+        display_training_metrics(
+            metrics=train_metrics,
             console=console,
-            max_cols_per_row=16,
-            max_width=20,
         )
-
-        logger.info(
-            "End of training epoch %d / %d \t Time Taken: %d sec"
-            % (epoch, epochs, time.time() - epoch_start_time)
-        )
+        logger.info("Epoch %d: Training Metrics: %s" % (epoch, train_metrics))
 
         ########################################################################################
 
         cmam.reset_metric_recorders()
         epoch_rec_metric_recorder = cmam.metric_recorder.clone()
-        # epoch_cls_metric_recorder = cmam.predictions_metric_recorder.clone()
         for batch in tqdm(
             val_dataset,
             desc="Validation",
@@ -258,7 +227,6 @@ if __name__ == "__main__":
             colour="blue",
             total=len(val_dataset),
         ):
-            # batch["missing_index"] = mp[len(data) * i : len(data) * (i + 1), :]
             results = cmam.evaluate(
                 batch=batch,
                 labels=batch["label"],
@@ -268,17 +236,12 @@ if __name__ == "__main__":
             )
             epoch_rec_metric_recorder.update_from_dict(results)
 
-        validation_cm = epoch_rec_metric_recorder.get("ConfusionMatrix", default=None)
-        if validation_cm is not None:
-            validation_cm = np.sum(validation_cm, axis=0)
-            tqdm.write(str(validation_cm))
-            del epoch_rec_metric_recorder.results["ConfusionMatrix"]
-
         validation_metrics = epoch_rec_metric_recorder.get_average_metrics(
             save_to=os.path.join(
-                f"{config.logging.metrics_path.rsplit('.', 1)[0]}_rec",
+                f"{config.logging.metrics_path.rsplit('.', 1)[0]}",
                 "cmam_validation",
             ),
+            epoch=epoch,
         )
 
         if scheduler is not None:
@@ -289,14 +252,9 @@ if __name__ == "__main__":
         logger.info("Learning rate = %.7f" % optimizer.param_groups[0]["lr"])
         console.rule("Validation Metrics")
 
-        print_all_metrics_tables(
+        display_validation_metrics(
             metrics=validation_metrics,
             console=console,
-            max_cols_per_row=16,
-            max_width=15,
-            target_metric="".join(
-                str(k)[0] for k in list(config.cmam.input_encoder_info.keys())
-            ),
         )
 
         # explicity print the loss terms as well
@@ -313,6 +271,9 @@ if __name__ == "__main__":
         console.print(
             f"Epoch {epoch} saved at {config.logging.model_output_path.replace('.pth', f'_{epoch}.pth')}"
         )
+        logger.info(f"Epoch {epoch} saved at {config.logging.model_output_path}")
+
+        save_metric = config.logging.save_metric.replace("_", "", 1)
 
         # EARLY STOPPING - Based on the target metric
         if config.training.early_stopping:
@@ -321,18 +282,16 @@ if __name__ == "__main__":
             )  # Number of epochs to wait for improvement
             min_delta = config.training.early_stopping_min_delta
             # Determine whether we are minimizing or maximizing the metric
-            if config.logging.save_metric == "loss":
+            if save_metric == "loss":
                 improvement = (
-                    best_metrics[config.logging.save_metric]
-                    - validation_metrics[config.logging.save_metric]
+                    best_metrics[save_metric] - validation_metrics[save_metric]
                 )
                 console.print(
-                    f"Improvement: {improvement}, Best: {best_metrics[config.logging.save_metric]}, Current: {validation_metrics[config.logging.save_metric]}"
+                    f"Improvement: {improvement}, Best: {best_metrics[save_metric]}, Current: {validation_metrics[save_metric]}"
                 )
             else:
                 improvement = (
-                    validation_metrics[config.logging.save_metric]
-                    - best_metrics[config.logging.save_metric]
+                    validation_metrics[save_metric] - best_metrics[save_metric]
                 )  # Improvement means increase
 
             if epoch > patience:
@@ -342,7 +301,7 @@ if __name__ == "__main__":
                         f"No improvement for {patience} epochs, stopping training..."
                     )
                     logger.info(
-                        f"Early stopping at epoch {epoch} due to no improvement in {config.logging.save_metric}"
+                        f"Early stopping at epoch {epoch} due to no improvement in {save_metric}"
                     )
                     break
 
@@ -351,25 +310,28 @@ if __name__ == "__main__":
 
         # record epoch with best result as per the target metric
 
-        if config.logging.save_metric == "loss":
+        if save_metric == "loss":
+            console.print(
+                f"Current best model found at epoch {best_eval_epoch} with a {save_metric} of {best_eval_loss}"
+            )
             if validation_metrics["loss"] < best_eval_loss:
                 console.print(f"New best model found at epoch {epoch}")
                 best_eval_epoch = epoch
                 best_eval_loss = validation_metrics["loss"]
                 best_metrics = validation_metrics
         else:
-            target_metric = validation_metrics[config.logging.save_metric]
-            if target_metric > best_metrics[config.logging.save_metric]:
+            target_metric = validation_metrics[save_metric]
+            if target_metric > best_metrics[save_metric]:
                 console.print(f"New best model found at epoch {epoch}")
                 best_eval_epoch = epoch
                 best_metrics = validation_metrics
 
     console.print("Training complete")
     console.print(
-        f"Best eval epoch was {best_eval_epoch} with a {config.logging.save_metric} of {best_metrics[config.logging.save_metric]}"
+        f"Best eval epoch was {best_eval_epoch} with a {save_metric} of {best_metrics[save_metric]}"
     )
     logger.info(
-        f"Best eval epoch was {best_eval_epoch} with a {config.logging.save_metric} of {best_metrics[config.logging.save_metric]}"
+        f"Best eval epoch was {best_eval_epoch} with a {save_metric} of {best_metrics[save_metric]}"
     )
 
     cmam.load_state_dict(
@@ -445,17 +407,6 @@ if __name__ == "__main__":
             del results["labels"]
 
             epoch_rec_metric_recorder.update_from_dict(results)
-        test_cm = epoch_rec_metric_recorder.get("ConfusionMatrix", default=None)
-        if test_cm is not None:
-            test_cm = np.sum(test_cm, axis=0)
-            tqdm.write(str(test_cm))
-            del epoch_rec_metric_recorder.results["ConfusionMatrix"]
-
-            ## save the confusion matrix
-            np.save(
-                os.path.join(result_dir, "confusion_matrix_test.npy"),
-                test_cm,
-            )
 
         epoch_rec_metrics = epoch_rec_metric_recorder.get_average_metrics(
             save_to=os.path.join(
@@ -468,37 +419,66 @@ if __name__ == "__main__":
         preds = np.concatenate([p.detach().cpu().numpy() for p in preds], axis=0)
         labels = np.concatenate([l.detach().cpu().numpy() for l in labels], axis=0)
 
-        # if isinstance(cmam, DualCMAM):
-        #     np.save(
-        #         os.path.join(result_dir, "rec_embds_one_test.npy"),
-        #         np.concatenate([r for r in rec_embds], axis=0),
-        #     )
-        #     np.save(
-        #         os.path.join(result_dir, "rec_embds_two_test.npy"),
-        #         np.concatenate([r for r in rec_embds_two], axis=0),
-        #     )
+        if isinstance(cmam, DualCMAM):
+            ## save the embeddings
+            if isinstance(rec_embds[0], torch.Tensor):
+                rec_embds = np.concatenate(
+                    [r.detach().cpu().numpy() for r in rec_embds], axis=0
+                )
+                rec_embds_two = np.concatenate(
+                    [r.detach().cpu().numpy() for r in rec_embds_two], axis=0
+                )
+                target_embds = np.concatenate(
+                    [r.detach().cpu().numpy() for r in target_embds], axis=0
+                )
 
-        #     np.save(
-        #         os.path.join(result_dir, "target_embds_one_test.npy"),
-        #         np.concatenate([r for r in target_embds], axis=0),
-        #     )
+                target_embds_two = np.concatenate(
+                    [r.detach().cpu().numpy() for r in target_embds_two], axis=0
+                )
 
-        #     np.save(
-        #         os.path.join(result_dir, "target_embds_two_test.npy"),
-        #         np.concatenate([r for r in target_embds_two], axis=0),
-        #     )
+                np.save(os.path.join(result_dir, "rec_embds_test.npy"), rec_embds)
+                np.save(
+                    os.path.join(result_dir, "rec_embds_two_test.npy"), rec_embds_two
+                )
+                np.save(os.path.join(result_dir, "target_embds_test.npy"), target_embds)
+                np.save(
+                    os.path.join(result_dir, "target_embds_two_test.npy"),
+                    target_embds_two,
+                )
+            else:
+                np.save(os.path.join(result_dir, "rec_embds_test.npy"), rec_embds)
+                np.save(
+                    os.path.join(result_dir, "rec_embds_two_test.npy"), rec_embds_two
+                )
+                np.save(os.path.join(result_dir, "target_embds_test.npy"), target_embds)
+                np.save(
+                    os.path.join(result_dir, "target_embds_two_test.npy"),
+                    target_embds_two,
+                )
+        else:
+            if isinstance(rec_embds[0], torch.Tensor):
+                rec_embds = np.concatenate(
+                    [r.detach().cpu().numpy() for r in rec_embds], axis=0
+                )
+                target_embds = np.concatenate(
+                    [r.detach().cpu().numpy() for r in target_embds], axis=0
+                )
 
-        # else:
-        #     np.save(os.path.join(result_dir, "rec_embds_test.npy"), rec_embds)
-        #     np.save(
-        #         os.path.join(result_dir, "target_embds_test.npy"),
-        #         target_embds,
-        #     )
+                np.save(os.path.join(result_dir, "rec_embds_test.npy"), rec_embds)
+                np.save(os.path.join(result_dir, "target_embds_test.npy"), target_embds)
+            else:
+                np.save(os.path.join(result_dir, "rec_embds_test.npy"), rec_embds)
+                np.save(os.path.join(result_dir, "target_embds_test.npy"), target_embds)
 
         # ## save them to disk
-        # np.save(os.path.join(result_dir, "predictions_test.npy"), preds)
-        # np.save(os.path.join(result_dir, "labels_test.npy"), labels)
+        np.save(os.path.join(result_dir, "predictions_test.npy"), preds)
+        np.save(os.path.join(result_dir, "labels_test.npy"), labels)
 
+        console.rule("Test Metrics")
+        display_validation_metrics(
+            metrics=epoch_rec_metrics,
+            console=console,
+        )
         ## start a completely independent process to generate the visualizations
         input_modalities = "-".join(
             [str(k) for k in config.cmam.input_encoder_info.keys()]
@@ -508,7 +488,9 @@ if __name__ == "__main__":
             target_modality = str(config.cmam.target_modality)
         else:
             target_modality = (
-                config.cmam.target_modality_one + "-" + config.cmam.target_modality_two
+                str(config.cmam.target_modality_one).title()
+                + "-"
+                + str(config.cmam.target_modality_two).title()
             )
 
         dataset_name = config.data.datasets["test"].dataset
@@ -540,22 +522,56 @@ if __name__ == "__main__":
             process = subprocess.Popen(full_command, shell=True)
             console.print("Started t-SNE visualization process with PID: ", process.pid)
 
-        console.rule("Test Metrics")
-        print_all_metrics_tables(
-            metrics=epoch_rec_metrics,
-            console=console,
-            max_cols_per_row=16,
-            max_width=15,
-        )
-
         file_name = os.path.join(result_dir, "test_metrics.json")
         os.makedirs(os.path.dirname(file_name), exist_ok=True)
-        epoch_rec_metrics = {k: float(v) for k, v in epoch_rec_metrics.items()}
-
-        with open(file_name, "w") as f:
-            json_str = json.dumps(epoch_rec_metrics, indent=4)
-            f.write(json_str)
 
     clean_checkpoints(
         os.path.dirname(config.logging.model_output_path), best_eval_epoch
     )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Federated Learning Runner")
+    parser.add_argument(
+        "-c",
+        "--config",
+        type=str,
+        required=True,
+        help="Path to config file",
+    )
+    parser.add_argument("--run_id", default=-1, type=int, help="Run ID for logging")
+    args = parser.parse_args()
+    config_path = args.config
+    run_id = args.run_id
+    config = CMAMConfig.load(config_path, run_id=run_id)
+    console.print(
+        config,
+        style="bold green",
+    )
+
+    console.print("Config loaded successfully", style="bold green")
+    console.print("Configuring logger...", style="bold blue")
+
+    level = logging.DEBUG if config.experiment.debug else logging.INFO
+
+    configure_logger(config)
+
+    logger = get_logger()
+
+    ## This message should not be visible in the console
+    logger.info(
+        "Logger configured successfully. Logging to %s", config.logging.log_path
+    )
+
+    logger.info(f"{config.experiment.name} - Run ID: {run_id}")
+
+    console.print(
+        "Logger successfully configured and is logging to %s",
+        config.logging.log_path + logger.handlers[0].baseFilename,
+        style="bold blue",
+    )
+
+    logger.info(f"Loaded configuration from {config_path}")
+    logger.info(config)
+
+    main(config)

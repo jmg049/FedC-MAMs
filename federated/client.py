@@ -13,7 +13,7 @@ from tqdm import tqdm
 from config.federated_config import FederatedClientConfig
 from federated import FederatedResult
 from models import MultimodalModelProtocol
-from utils import print_all_metrics_tables
+from utils import display_validation_metrics, display_training_metrics
 
 from utils import get_logger
 
@@ -133,33 +133,23 @@ class FederatedMultimodalClient:
             results = self._evaluate_step(batch)
             self.model.metric_recorder.update_from_dict(results)
 
-        test_cm = self.model.metric_recorder.get("ConfusionMatrix", default=None)
-        if test_cm is not None:
-            test_cm = np.sum(test_cm, axis=0)
-            tqdm.write(str(test_cm))
-            del self.model.metric_recorder.results["ConfusionMatrix"]
-
-        test_metrics = self.model.metric_recorder.get_average_metrics()
+        test_metrics = self.model.metric_recorder.get_average_metrics(
+            save_to=os.path.join(
+                self.metrics_output_dir,
+                f"{self.current_round}/test",
+            ),
+            epoch="best_test",
+        )
 
         self.print_fn("Test Metrics")
-        print_all_metrics_tables(
+        display_validation_metrics(
             metrics=test_metrics,
             console=None,
-            max_cols_per_row=16,
         )
 
         self.print_fn(
             f"Evaluation of the best model on the test set completed on Client: {self.client_id}."
         )
-
-        with open(
-            os.path.join(
-                self.metrics_output_dir, f"test_metrics_round_{self.current_round}.json"
-            ),
-            "w",
-        ) as f:
-            json_str = json.dumps(test_metrics, indent=4)
-            f.write(json_str)
 
         return FederatedResult(
             client_info=self.status(),
@@ -190,18 +180,12 @@ class FederatedMultimodalClient:
             ):
                 results = self._train_step(batch)
                 epoch_metric_recorder.update_from_dict(results)
-            train_cm = epoch_metric_recorder.get("ConfusionMatrix", default=None)
-            if train_cm is not None:
-                train_cm = np.sum(train_cm, axis=0)
-                tqdm.write(str(train_cm))
-                del epoch_metric_recorder.results["ConfusionMatrix"]
 
             train_metrics = epoch_metric_recorder.get_average_metrics()
             self.print_fn("Train Metrics")
-            print_all_metrics_tables(
+            display_training_metrics(
                 metrics=train_metrics,
                 console=None,
-                max_cols_per_row=16,
             )
 
             self.model.metric_recorder.reset()
@@ -220,12 +204,6 @@ class FederatedMultimodalClient:
                 results = self._evaluate_step(batch)
                 epoch_metric_recorder.update_from_dict(results)
 
-            val_cm = epoch_metric_recorder.get("ConfusionMatrix", default=None)
-            if val_cm is not None:
-                val_cm = np.sum(val_cm, axis=0)
-                tqdm.write(str(val_cm))
-                del epoch_metric_recorder.results["ConfusionMatrix"]
-
             val_metrics = epoch_metric_recorder.get_average_metrics(
                 save_to=os.path.join(
                     self.metrics_output_dir,
@@ -234,10 +212,9 @@ class FederatedMultimodalClient:
                 epoch=self.current_epoch,
             )
             self.print_fn("Validation Metrics")
-            print_all_metrics_tables(
+            display_validation_metrics(
                 metrics=val_metrics,
                 console=None,
-                max_cols_per_row=16,
             )
 
             logger.info(f"Validation Metrics: {val_metrics}")

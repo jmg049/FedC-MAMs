@@ -29,10 +29,10 @@ class FederatedCMAMClient:
         device: torch.device,
         fed_config: FederatedCMAMClientConfig,
         total_epochs: int,
-        run_id: int = -1,
-        model_output_dir: str = "models",
-        metrics_output_dir: str = "metrics",
-        logging_output_dir: str = "logs",
+        model_output_dir: str,
+        metrics_output_dir: str,
+        logging_output_dir: str,
+        run_id: int,
         scheduler: Optional[_LRScheduler] = None,
         train_loader: Optional[DataLoader] = None,
         val_loader: Optional[DataLoader] = None,
@@ -47,6 +47,13 @@ class FederatedCMAMClient:
             assert (
                 train_loader is not None
             ), "train_loader should be provided if val_loader is provided."
+
+            logger.info(
+                f"Client {client_id} has {len(train_loader)} training samples and {len(val_loader)} validation samples."
+            )
+
+        if test_loader is not None:
+            logger.info(f"Client {client_id} has {len(test_loader)} test samples.")
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.test_loader = test_loader
@@ -82,15 +89,11 @@ class FederatedCMAMClient:
             run_id=run_id, client_id=client_id
         )
 
-        os.makedirs(self.model_output_dir, exist_ok=True)
-        os.makedirs(self.metrics_output_dir, exist_ok=True)
-        os.makedirs(self.logging_output_dir, exist_ok=True)
-
     def get_model_parameters(self) -> Dict[str, torch.Tensor]:
         ## return a deep copy of the state_dict
         return deepcopy(self.cmam.state_dict())
 
-    def set_model_parameters(self, model_params: Dict[str, torch.Tensor]):
+    def set_model_parameters(self, model_params: Dict[str, torch.Tensor]) -> None:
         self.cmam.load_state_dict(deepcopy(model_params))
 
     def status(self) -> Dict[str, Any]:
@@ -106,7 +109,6 @@ class FederatedCMAMClient:
         }
 
     def _train_step(self, batch: Dict[str, Any]) -> Dict[str, Any]:
-
         output = self.cmam.train_step(
             batch=batch,
             labels=batch["label"],
@@ -131,11 +133,15 @@ class FederatedCMAMClient:
         self.print_fn(
             f"Evaluating the best model on the test set on Client: {self.client_id}."
         )
+        logger.info(
+            f"Evaluating the best model on the test set on Client: {self.client_id}."
+        )
 
         self.cmam.load_state_dict(torch.load(self.best_model_path, weights_only=True))
         self.cmam.metric_recorder.reset()
 
-        print(f"Loaded best model from {self.best_model_path}")
+        self.print_fn(f"Loaded best model from {self.best_model_path}")
+        logger.info(f"Loaded best model from {self.best_model_path}")
         self.model.eval()
         self.cmam.eval()
         for batch in tqdm(dataloader, ascii=True, total=len(dataloader)):
@@ -157,7 +163,12 @@ class FederatedCMAMClient:
             max_cols_per_row=16,
         )
 
+        logger.info(f"Test Metrics: {test_metrics}")
+
         self.print_fn(
+            f"Evaluation of the best model on the test set completed on Client: {self.client_id}."
+        )
+        logger.info(
             f"Evaluation of the best model on the test set completed on Client: {self.client_id}."
         )
 
@@ -169,6 +180,9 @@ class FederatedCMAMClient:
         ) as f:
             json_str = json.dumps(test_metrics, indent=4)
             f.write(json_str)
+        logger.info(
+            f"Saved test metrics to {os.path.join(self.metrics_output_dir, f'test_metrics_round_{self.current_round}.json')}"
+        )
 
         return FederatedResult(
             client_info=self.status(),
@@ -185,6 +199,9 @@ class FederatedCMAMClient:
         self.print_fn(
             f"Training round {self.current_round} started on Client: {self.client_id}."
         )
+        logger.info(
+            f"Training round {self.current_round} started on Client: {self.client_id}."
+        )
         self.cmam.metric_recorder.reset()
         epoch_metric_recorder = self.cmam.metric_recorder.clone()
         for epoch in range(1, self.total_epochs + 1):
@@ -192,6 +209,9 @@ class FederatedCMAMClient:
             epoch_metric_recorder.reset()
             self.current_epoch = epoch
             self.print_fn(
+                f"Epoch {epoch}/{self.total_epochs} started on Client: {self.client_id}."
+            )
+            logger.info(
                 f"Epoch {epoch}/{self.total_epochs} started on Client: {self.client_id}."
             )
             for batch in tqdm(
@@ -203,7 +223,10 @@ class FederatedCMAMClient:
             if train_cm is not None:
                 train_cm = np.sum(train_cm, axis=0)
                 tqdm.write(str(train_cm))
+                logger.info(f"Train Confusion Matrix: {train_cm}")
                 del epoch_metric_recorder.results["ConfusionMatrix"]
+
+            logger.info(f"Train Metrics: {epoch_metric_recorder.results}")
 
             train_metrics = epoch_metric_recorder.get_average_metrics()
             self.print_fn("Train Metrics")
@@ -221,8 +244,13 @@ class FederatedCMAMClient:
                 self.print_fn(
                     f"Learning rate: {self.optimizer.param_groups[0]['lr']:7f}"
                 )
+                logger.info(f"Learning rate: {self.optimizer.param_groups[0]['lr']:7f}")
 
             ##############################################################################
+            logger.info(
+                f"Epoch {epoch}/{self.total_epochs} completed on Client: {self.client_id}."
+            )
+            self.model.eval()
 
             self.cmam.eval()
             for batch in tqdm(self.val_loader, ascii=True, total=len(self.val_loader)):
@@ -233,6 +261,7 @@ class FederatedCMAMClient:
             if val_cm is not None:
                 val_cm = np.sum(val_cm, axis=0)
                 tqdm.write(str(val_cm))
+                logger.info(f"Validation Confusion Matrix: {val_cm}")
                 del epoch_metric_recorder.results["ConfusionMatrix"]
 
             val_metrics = epoch_metric_recorder.get_average_metrics(
@@ -275,22 +304,32 @@ class FederatedCMAMClient:
                         "best.pth",
                     )
                     os.makedirs(os.path.dirname(self.best_model_path), exist_ok=True)
+                    torch.save(self.cmam.state_dict(), self.best_model_path)
+
                     self.print_fn(
+                        f"Best model saved at {self.best_model_path} with score: {self.best_model_score}"
+                    )
+                    logger.info(
                         f"Best model saved at {self.best_model_path} with score: {self.best_model_score}"
                     )
 
-                    torch.save(self.cmam.state_dict(), self.best_model_path)
-                    self.print_fn(
-                        f"Best model saved at {self.best_model_path} with score: {self.best_model_score}"
-                    )
             self.print_fn(f"Epoch {epoch}/{self.total_epochs} completed.")
+            logger.info(f"Epoch {epoch}/{self.total_epochs} completed.")
         self.print_fn(
+            f"Training round {self.current_round} completed on Client: {self.client_id}."
+        )
+        logger.info(
             f"Training round {self.current_round} completed on Client: {self.client_id}."
         )
 
         if self.test_loader is not None:
+            logger.info(
+                f"Starting evaluation of the best model on the test set on Client: {self.client_id}."
+            )
             return self.evaluate_round(dataloader=self.test_loader)
-
+        logger.info(
+            f"Starting evaluation of the best model on the validation set on Client: {self.client_id}."
+        )
         ## load the best model anyways and return the validation metrics
         self.cmam.load_state_dict(torch.load(self.best_model_path, weights_only=True))
         return self.evaluate_round(dataloader=self.val_loader)

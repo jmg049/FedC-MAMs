@@ -15,8 +15,13 @@ from config import StandardConfig, resolve_model_name
 from data import build_dataloader
 from missing_index import missing_pattern
 from models import kaiming_init, check_protocol_compliance, MultimodalModelProtocol
-from utils import clean_checkpoints, print_all_metrics_tables
-from utils.logger import get_logger
+from utils import (
+    clean_checkpoints,
+    de_device,
+    display_training_metrics,
+    display_validation_metrics,
+)
+from utils import get_logger
 from utils.metric_recorder import MetricRecorder
 
 add_modality("VIDEO")
@@ -38,9 +43,10 @@ if __name__ == "__main__":
         console.print(f"Error loading config:\n{e}")
         exit(1)
 
-    logger_path = config.logging.log_path
-    logger = get_logger(logger_path)
-    console.print(f"Initalized logger. Logging to {logger_path}")
+    console.print("Config loaded")
+    console.print(config)
+
+    logger = get_logger()
     result_dir = config.logging.metrics_path
     console.print(f"Results will be saved to {result_dir}")
 
@@ -81,13 +87,14 @@ if __name__ == "__main__":
     logger.info("Total iterations: %d" % total_iters)
 
     model_cls = resolve_model_name(config.model.name)
-    model = model_cls(**config.model.kwargs)
+    model = model_cls(
+        **config.model.kwargs, metric_recorder=MetricRecorder(config=config.metrics)
+    )
     check_protocol_compliance(model, MultimodalModelProtocol)
     kaiming_init(
         model,
     )
     model.to(device)
-    model.set_metric_recorder(MetricRecorder(config=config.metrics))
     total_iters = 0  # the total number of training iterations
 
     best_eval_epoch = -1  # record the best eval epoch
@@ -113,6 +120,24 @@ if __name__ == "__main__":
         scheduler = config.get_scheduler(optimizer=optimizer)
         console.print("Scheduler created")
         logger.info(f"Scheduler created\n{scheduler}")
+
+    patience = (
+        config.training.early_stopping_patience
+        if config.training.early_stopping
+        else None
+    )  # Number of epochs to wait for improvement
+    min_delta = (
+        config.training.early_stopping_min_delta
+        if config.training.early_stopping
+        else None
+    )
+    wait = 0  # Counter to track number of epochs without significant improvement
+
+    # Determine whether we are minimizing or maximizing the metric
+    if config.logging.save_metric == "loss":
+        mode = "minimize"
+    else:
+        mode = "maximize"
 
     for epoch in tqdm(
         range(1, epochs + 1), desc="Epochs", unit="epoch", total=epochs, colour="yellow"
@@ -145,21 +170,16 @@ if __name__ == "__main__":
             epoch_metric_recorder.update_from_dict(results)
             iter_data_time = time.time()
 
-        train_cm = epoch_metric_recorder.get("ConfusionMatrix", default=None)
-        if train_cm is not None:
-            train_cm = np.sum(train_cm, axis=0)
-            tqdm.write(str(train_cm))
-            del epoch_metric_recorder.results["ConfusionMatrix"]
+        # train_cm = epoch_metric_recorder.get("ConfusionMatrix", default=None)
+        # if train_cm is not None:
+        #     train_cm = np.sum(train_cm, axis=0)
+        #     tqdm.write(str(train_cm))
+        #     del epoch_metric_recorder.results["ConfusionMatrix"]
 
         train_metrics = epoch_metric_recorder.get_average_metrics()
 
         console.rule("Training Metrics")
-        print_all_metrics_tables(
-            metrics=train_metrics,
-            console=console,
-            max_cols_per_row=15,
-            max_width=20,
-        )
+        display_training_metrics(train_metrics, console)
 
         logger.info(
             "End of training epoch %d / %d \t Time Taken: %d sec"
@@ -184,58 +204,18 @@ if __name__ == "__main__":
             results = model.evaluate(batch=batch, criterion=criterion, device=device)
             epoch_metric_recorder.update_from_dict(results)
 
-        validation_cm = epoch_metric_recorder.get("ConfusionMatrix", default=None)
-        if validation_cm is not None:
-            validation_cm = np.sum(validation_cm, axis=0)
-            tqdm.write(str(validation_cm))
-            del epoch_metric_recorder.results["ConfusionMatrix"]
-
         validation_metrics = epoch_metric_recorder.get_average_metrics(
             save_to=os.path.join(
-                config.logging.metrics_path.rsplit(".", 1)[0], f"validation/{run_idx}"
+                config.logging.metrics_path.rsplit(".", 1)[0], "validation/"
             ),
             epoch=epoch,
         )
 
         console.rule("Validation Metrics")
 
-        print_all_metrics_tables(
-            metrics=validation_metrics,
-            console=console,
-            max_cols_per_row=15,
-            max_width=15,
-        )
+        display_validation_metrics(validation_metrics, console)
 
         #########################################################################################
-
-        # show test result for debugging
-        if do_test and verbose and epoch % 5 == 0:
-            model.metric_recorder.reset()
-            epoch_metric_recorder = model.metric_recorder.clone()
-            for batch in tqdm(tst_dataset, desc="Test", unit="Batches", colour="green"):
-                # batch["missing_index"] = mp[batch_size * i : batch_size * (i + 1), :]
-                # batch["missing_index"] = mp[len(data) * i : len(data) * (i + 1), :]
-
-                results = model.evaluate(
-                    batch=batch, criterion=criterion, device=device
-                )
-                epoch_metric_recorder.update_from_dict(results)
-
-            test_cm = epoch_metric_recorder.get("ConfusionMatrix", default=None)
-            if test_cm is not None:
-                test_cm = np.sum(test_cm, axis=0)
-                tqdm.write(str(test_cm))
-                del epoch_metric_recorder.results["ConfusionMatrix"]
-
-            epoch_metrics = epoch_metric_recorder.get_average_metrics()
-
-            console.rule("Test Metrics")
-            print_all_metrics_tables(
-                metrics=epoch_metrics,
-                console=console,
-                max_cols_per_row=15,
-                max_width=15,
-            )
 
         model_state_dict = model.state_dict()
         os.makedirs(os.path.dirname(config.logging.model_output_path), exist_ok=True)
@@ -246,56 +226,61 @@ if __name__ == "__main__":
         console.print(
             f"Epoch {epoch} saved at {config.logging.model_output_path.replace('.pth', f'_{epoch}.pth')}"
         )
+
+        save_metric = config.logging.save_metric.replace("_", "", 1)
+
         # EARLY STOPPING - Based on the target metric
-        if config.training.early_stopping:
-            patience = (
-                config.training.early_stopping_patience
-            )  # Number of epochs to wait for improvement
-            min_delta = config.training.early_stopping_min_delta
-            # Determine whether we are minimizing or maximizing the metric
-            if config.logging.save_metric == "loss":
+        if patience is not None:
+            if save_metric == "loss":
                 improvement = (
-                    best_metrics[config.logging.save_metric]
-                    - validation_metrics[config.logging.save_metric]
-                )
-                console.print(
-                    f"Improvement: {improvement}, Best: {best_metrics[config.logging.save_metric]}, Current: {validation_metrics[config.logging.save_metric]}"
+                    best_metrics[save_metric] - validation_metrics[save_metric]
                 )
             else:
                 improvement = (
-                    validation_metrics[config.logging.save_metric]
-                    - best_metrics[config.logging.save_metric]
-                )  # Improvement means increase
+                    validation_metrics[save_metric] - best_metrics[save_metric]
+                )
 
-            if epoch > patience:
-                # Check if there is significant improvement by at least `min_delta`
-                if improvement < min_delta:
-                    console.print(
-                        f"No improvement for {patience} epochs, stopping training..."
-                    )
-                    logger.info(
-                        f"Early stopping at epoch {epoch} due to no improvement in {config.logging.save_metric}"
-                    )
-                    break
+            console.print(
+                f"Improvement: {improvement}, Best: {best_metrics[save_metric]}, Current: {validation_metrics[save_metric]}"
+            )
 
-        if config.logging.save_metric == "loss":
+            if (mode == "minimize" and improvement > min_delta) or (
+                mode == "maximize" and improvement > min_delta
+            ):
+                best_metrics[save_metric] = validation_metrics[save_metric]
+                console.print("Resetting wait counter")
+                wait = 0  # Reset the counter if there is an improvement
+            else:
+                wait += 1
+                console.print(f"Wait counter: {wait}")
+
+            if wait >= patience:
+                console.print(
+                    f"No improvement for {patience} epochs, stopping training..."
+                )
+                logger.info(
+                    f"Early stopping at epoch {epoch} due to no improvement in {save_metric}"
+                )
+                break
+
+        if save_metric == "loss":
             if validation_metrics["loss"] < best_eval_loss:
                 console.print(f"New best model found at epoch {epoch}")
                 best_eval_epoch = epoch
                 best_eval_loss = validation_metrics["loss"]
                 best_metrics = validation_metrics
         else:
-            target_metric = validation_metrics[config.logging.save_metric]
-            if target_metric > best_metrics[config.logging.save_metric]:
+            target_metric = validation_metrics[save_metric]
+            if target_metric > best_metrics[save_metric]:
                 console.print(f"New best model found at epoch {epoch}")
                 best_eval_epoch = epoch
                 best_metrics = validation_metrics
     console.print("Training complete")
     console.print(
-        f"Best eval epoch was {best_eval_epoch} with a {config.logging.save_metric} of {best_metrics[config.logging.save_metric]}"
+        f"Best eval epoch was {best_eval_epoch} with a {save_metric} of {best_metrics[save_metric]}"
     )
     logger.info(
-        f"Best eval epoch was {best_eval_epoch} with a {config.logging.save_metric} of {best_metrics[config.logging.save_metric]}"
+        f"Best eval epoch was {best_eval_epoch} with a {save_metric} of {best_metrics[save_metric]}"
     )
 
     if config.training.do_validation_visualization:
@@ -336,34 +321,67 @@ if __name__ == "__main__":
 
         model.metric_recorder.reset()
         epoch_metric_recorder = model.metric_recorder.clone()
+
+        all_predictions = []
+        all_labels = []
+        all_miss_types = []
         for batch in tqdm(tst_dataset, desc="Test", unit="Batches", colour="green"):
             # batch["missing_index"] = mp[len(data) * i : len(data) * (i + 1), :]
-            results = model.evaluate(batch=batch, criterion=criterion, device=device)
-            epoch_metric_recorder.update_from_dict(results)
 
-        cm = epoch_metric_recorder.get("ConfusionMatrix", default=None)
-        if cm is not None:
-            cm = np.sum(cm, axis=0)
-            tqdm.write(str(cm))
-            del epoch_metric_recorder.results["ConfusionMatrix"]
+            results = model.evaluate(
+                batch=batch, criterion=criterion, device=device, return_test_info=True
+            )
+
+            all_predictions.extend(results["predictions"])
+            all_labels.extend(results["labels"])
+            all_miss_types.extend(results["miss_types"])
+
+            del results["predictions"]
+            del results["labels"]
+            del results["miss_types"]
+
+            epoch_metric_recorder.update_from_dict(results)
 
         epoch_metrics = epoch_metric_recorder.get_average_metrics(
             save_to=os.path.join(
-                config.logging.metrics_path.rsplit(".", 1)[0], f"test/{run_idx}"
+                config.logging.metrics_path.rsplit(".", 1)[0],
+                "test",
             ),
+            epoch="test_best",
         )
-
         console.rule("Test Metrics")
-        print_all_metrics_tables(
+        display_validation_metrics(
             metrics=epoch_metrics,
             console=console,
-            max_cols_per_row=15,
-            max_width=15,
         )
 
-        file_name = os.path.join(result_dir, f"test_metrics_{best_eval_epoch}.json")
-        os.makedirs(os.path.dirname(file_name), exist_ok=True)
+        for k, v in epoch_metrics.items():
+            if "ConfusionMatrix" in k:
+                np.save(
+                    os.path.join(result_dir, f"{k}.npy"),
+                    np.array(v),
+                )
 
-        with open(file_name, "w") as f:
-            json_str = json.dumps(epoch_metrics, indent=4)
-            f.write(json_str)
+        ## flatten the list of lists
+        all_predictions = [
+            de_device(item) for sublist in all_predictions for item in sublist
+        ]
+        all_labels = [de_device(item) for sublist in all_labels for item in sublist]
+        all_miss_types = [
+            de_device(item) for sublist in all_miss_types for item in sublist
+        ]
+
+        np.save(
+            os.path.join(result_dir, "test_predictions.npy"),
+            np.array(all_predictions),
+        )
+
+        np.save(
+            os.path.join(result_dir, "test_labels.npy"),
+            np.array(all_labels),
+        )
+
+        np.save(
+            os.path.join(result_dir, "test_miss_types.npy"),
+            np.array(all_miss_types),
+        )

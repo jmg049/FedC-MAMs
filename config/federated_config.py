@@ -16,7 +16,6 @@ from config.config import (
     resolve_optimizer,
 )
 from data.label_functions import avmnist_get_label_fn, cmu_get_label_fn
-from utils import SafeDict
 
 
 def federated_server_constructor(loader, node):
@@ -125,6 +124,7 @@ class FederatedServerConfig(BaseConfig):
 class FederatedLoggingConfig(LoggingConfig):
     iid_metrics_path: str
 
+
 @dataclass(kw_only=True)
 class FederatedConfig(Config):
     server_config: FederatedServerConfig
@@ -143,7 +143,9 @@ class FederatedConfig(Config):
         data_config = FederatedDataConfig.from_dict(data_config)
 
         if data_config.distribution_type == "non_iid":
-            experiment_config.name += f"_non_iid_{str(data_config.alpha).replace(".", "_")}"
+            experiment_config.name += (
+                f"_non_iid_{str(data_config.alpha).replace('.', '_')}"
+            )
 
         primary_logging_config = data["logging"]
         primary_logging_config = FederatedLoggingConfig.from_dict(
@@ -154,8 +156,13 @@ class FederatedConfig(Config):
 
         federated_config = data["federated"]
         server_config = federated_config["server_config"]
-        
-        assert all([k in server_config.logging for k in ["log_path", "model_output_path", "metrics_path"]]), "Missing logging paths in server config"
+
+        assert all(
+            [
+                k in server_config.logging
+                for k in ["log_path", "model_output_path", "metrics_path"]
+            ]
+        ), "Missing logging paths in server config"
 
         server_config.logging = LoggingConfig.from_dict(
             server_config.logging,

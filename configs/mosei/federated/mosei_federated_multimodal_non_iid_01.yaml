@@ -56,8 +56,8 @@ federated:
       input_size_v: 35
       embd_size_v: 96
       embd_method_v: "maxpool"
-      input_size_l: 768
-      embd_size_l: 96
+      input_size_t: 768
+      embd_size_t: 96
       classification_layers: [96, 96]
       output_dim: 3
       dropout: 0.5
@@ -132,15 +132,7 @@ metrics:
       kwargs:
         average: "micro"
         zero_division: 0
-    NonZeroAcc:
-      function: "metrics.mosi.binary_accuracy_non_zero"
-    NonZeroF1:
-      function: "metrics.mosi.binary_f1_score_non_zero"
-    HasZeroAcc:
-      function: "metrics.mosi.binary_accuracy"
-    HasZeroF1:
-      function: "metrics.mosi.binary_f1_score"
     ConfusionMatrix:
       function: "sklearn.metrics.confusion_matrix"
       kwargs:
-        labels: [0, 1, 2]
+        labels: [0, 1]

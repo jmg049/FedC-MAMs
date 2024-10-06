@@ -26,6 +26,7 @@ ipython = "^8.27.0"
 ruff = "^0.6.7"
 ipykernel = "^6.29.5"
 soundfile = "^0.12.1"
+pickleshare = "^0.7.5"
 
 
 [build-system]

@@ -33,6 +33,8 @@ class LoggerSingleton:
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
 
+            ## Uncomment this to log to console
+
             # console_handler = logging.StreamHandler()
             # console_handler.setLevel(logging.INFO)
             # console_handler.setFormatter(formatter)

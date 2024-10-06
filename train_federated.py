@@ -16,7 +16,7 @@ from data import (
 )
 from federated.client import FederatedMultimodalClient
 from federated.server import FederatedCongruentServer
-from utils import SafeDict, print_all_metrics_tables
+from utils import SafeDict, display_training_metrics, display_validation_metrics
 from utils.metric_recorder import MetricRecorder
 
 add_modality("VIDEO")
@@ -84,13 +84,7 @@ def main(config: FederatedConfig):
     for split, metrics in iid_metrics.items():
         if metrics is not None:
             console.print(f"[bold]{split}[/bold]")
-            print_all_metrics_tables(
-                metrics,
-                max_cols_per_row=10,
-                max_width=20,
-                console=console,
-                generic_table=True,
-            )
+            display_training_metrics(metrics, console=console)
     logger.debug(f"IID Metrics: {iid_metrics}")
     logger.debug(f"Saving iid metrics to {config.logging.iid_metrics_path}")
 
@@ -203,7 +197,7 @@ def main(config: FederatedConfig):
 
     # Print final results
     console.rule("Final Results")
-    print_all_metrics_tables(results["final_test_results"], console=console)
+    display_validation_metrics(results["final_test_results"], console=console)
 
     console.print(f"Best Round: {results['best_round']}")
     console.print(

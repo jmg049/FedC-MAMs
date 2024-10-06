@@ -40,11 +40,11 @@ federated:
     criterion: "cross_entropy"
     criterion_kwargs: {}
     epochs: 2
-    logging_config: 
-      save_metric: "NonZeroF1_AVL"
+    logging: 
+      save_metric: "loss"
       log_path: "experiments/mosei_federated/logs/{experiment_name}/{run_id}/global/"
       model_output_path: "experiments/mosei_federated/models/{experiment_name}/{run_id}/global/{round}/mosei_federated_model_{save_metric}.pth"
-      metrics_paths: "experiments/mosei_federated/metrics/{experiment_name}/{run_id}/global/{round}"
+      metrics_path: "experiments/mosei_federated/metrics/{experiment_name}/{run_id}/global/{round}"
     early_stopping: False
     early_stopping_patience: 10
     early_stopping_metric: "loss"
@@ -56,8 +56,8 @@ federated:
       input_size_v: 35
       embd_size_v: 96
       embd_method_v: "maxpool"
-      input_size_l: 768
-      embd_size_l: 96
+      input_size_t: 768
+      embd_size_t: 96
       classification_layers: [96, 96]
       output_dim: 3
       dropout: 0.5
@@ -75,11 +75,15 @@ federated:
       save_metric: "NonZeroF1_AVL"
       log_path: "experiments/mosei_federated/logs/{experiment_name}/{run_id}/client_{client_id}/"
       model_output_path: "experiments/mosei_federated/models/{experiment_name}/{run_id}/client_{client_id}/mosei_federated_model_{save_metric}.pth"
-      metrics_paths: "experiments/mosei_federated/metrics/{experiment_name}/{run_id}/client_{client_id}/"
+      metrics_path: "experiments/mosei_federated/metrics/{experiment_name}/{run_id}/client_{client_id}/"
     local_batch_size: 128
     early_stopping: False
     early_stopping_patience: 10
     early_stopping_metric: "loss"
+
+logging:
+  log_path: "experiments/mosei_federated/logs/{experiment_name}/{run_id}/"
+  iid_metrics_path: "experiments/mosei_federated/metrics/{experiment_name}/{run_id}/iid_metrics.json"
 
 metrics:
   metrics:
@@ -132,15 +136,7 @@ metrics:
       kwargs:
         average: "micro"
         zero_division: 0
-    NonZeroAcc:
-      function: "metrics.mosi.binary_accuracy_non_zero"
-    NonZeroF1:
-      function: "metrics.mosi.binary_f1_score_non_zero"
-    HasZeroAcc:
-      function: "metrics.mosi.binary_accuracy"
-    HasZeroF1:
-      function: "metrics.mosi.binary_f1_score"
     ConfusionMatrix:
       function: "sklearn.metrics.confusion_matrix"
       kwargs:
-        labels: [0, 1, 2]
+        labels: [0, 1]

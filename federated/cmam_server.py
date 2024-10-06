@@ -16,6 +16,10 @@ from federated.client import FederatedMultimodalClient
 from models import CMAMProtocol, MultimodalModelProtocol
 from utils import SafeDict, print_all_metrics_tables
 
+from utils import get_logger
+
+logger = get_logger()
+
 
 class FederatedCongruentCMAMServer:
     def __init__(
@@ -30,7 +34,7 @@ class FederatedCongruentCMAMServer:
         config: FederatedCMAMConfig,
         aggregation_strategy: Literal["fedavg"] = "fedavg",
         selection_strategy: Literal["all", "random"] = "all",
-    ):
+    ) -> "FederatedCongruentCMAMServer":
         assert (
             hasattr(model, "metric_recorder") and model.metric_recorder is not None
         ), "Model must have its metric recorder set and not None"
@@ -39,7 +43,6 @@ class FederatedCongruentCMAMServer:
         self.aggregation_strategy = aggregation_strategy
         self.num_clients = num_clients
         self.current_round = 0
-        # self.best_round = 0
         self.client_selection_strategy = selection_strategy
 
         self.device = device
@@ -54,6 +57,7 @@ class FederatedCongruentCMAMServer:
         return list(range(self.num_clients))
 
     def distribute_model(self) -> Dict[str, torch.Tensor]:
+        logger.debug("Distributing global model to clients")
         return deepcopy(self.global_cmam.state_dict())
 
     def fed_avg(self, client_results: List[FederatedResult]) -> Dict[str, torch.Tensor]:
@@ -106,13 +110,18 @@ class FederatedCongruentCMAMServer:
     ) -> Dict[str, torch.Tensor]:
         match self.aggregation_strategy:
             case "fedavg":
+                logger.debug("Aggregating models using FedAvg")
                 return self.fed_avg(client_results)
+            case "fedprox":
+                logger.debug("Aggregating models using FedProx")
+                return self.fed_prox(client_results)
             case _:
                 raise ValueError(
                     f"Invalid aggregation strategy: {self.aggregation_strategy}"
                 )
 
-    def update_global_model(self, aggregated_params: Dict[str, torch.Tensor]):
+    def update_global_model(self, aggregated_params: Dict[str, torch.Tensor]) -> None:
+        logger.debug("Updating global model with aggregated parameters")
         self.global_cmam.load_state_dict(aggregated_params)
 
     def evaluate_global_model(
@@ -147,13 +156,6 @@ class FederatedCongruentCMAMServer:
         best_eval_epoch = -1  # record the best eval epoch
         best_metrics = defaultdict(lambda: 0.0)
         best_eval_loss = 1e10
-
-        # missing_rate = self.config.training.missing_rates
-        # mp = missing_pattern(
-        #     self.config.training.num_modalities,
-        #     len(self.global_train_data.dataset),
-        #     missing_rate,
-        # )
 
         self.global_cmam.to(self.device)
         self.global_cmam.train()
@@ -359,7 +361,7 @@ class FederatedCongruentCMAMServer:
         optimizer: Optimizer,
         criterion: Module,
         print_fn: callable = print,
-    ):
+    ) -> dict[str, Any]:
         best_global_performance = None
         best_global_model_state = None
         best_round = 0
@@ -434,7 +436,7 @@ class FederatedCongruentCMAMServer:
 
                 # Save the best model
                 torch.save(best_global_model_state, full_path)
-                print(
+                print_fn(
                     f"New best model saved at round {best_round} with {save_metric} of {current_metric_value:.4f}"
                 )
 

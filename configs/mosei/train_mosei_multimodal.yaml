@@ -6,7 +6,7 @@ data:
   train:
     dataset: "mosei"
     data_fp: "DATA/MOSEI/aligned_50.pkl"
-    target_modality: "multimodal"
+    target_modality: !Modality "multimodal"
     split: "train"
     shuffle: True
     drop_last: True
@@ -16,17 +16,16 @@ data:
   validation:
     dataset: "mosei"
     data_fp: "DATA/MOSEI/aligned_50.pkl"
-    target_modality: "multimodal"
+    target_modality: !Modality "multimodal"
     split: "valid"
     drop_last: True
     pin_memory: True
     shuffle: True
 
-
   test:
     dataset: "mosei"
     data_fp: "DATA/MOSEI/aligned_50.pkl"
-    target_modality: "multimodal"
+    target_modality: !Modality "multimodal"
     split: "test"
     drop_last: True
     pin_memory: True
@@ -40,8 +39,8 @@ model:
   input_size_v: 35
   embd_size_v: 96
   embd_method_v: "maxpool"
-  input_size_l: 768
-  embd_size_l: 96
+  input_size_t: 768
+  embd_size_t: 96
   classification_layers: [96, 96]
   output_dim: 3
   dropout: 0.5
@@ -51,7 +50,8 @@ training:
   mode: "baseline"
   epochs: 20
   batch_size: 256
-  early_stopping_patience: 5
+  early_stopping: True
+  early_stopping_patience: 7
   early_stopping_metric: "loss"
   optimizer: "adam"
   optim_kwargs:
@@ -66,10 +66,10 @@ training:
     niter_decay: 10
 
 logging:
-  save_metric: "NonZeroF1_AVL"
+  save_metric: "loss"
   log_path: "experiments/mosei/logs/{experiment_name}/{run_id}/"
   model_output_path: "experiments/mosei/models/{experiment_name}/{run_id}/mosei_model_{save_metric}.pth" 
-  metrics_paths: "experiments/mosei/metrics/{experiment_name}/"
+  metrics_path: "experiments/mosei/metrics/{experiment_name}/{run_id}/"
 
 metrics:
   metrics:
@@ -122,13 +122,7 @@ metrics:
       kwargs:
         average: "micro"
         zero_division: 0
-    NonZeroAcc:
-      function: metrics.mosi.binary_accuracy_non_zero
-    NonZeroF1:
-      function: metrics.mosi.binary_f1_score_non_zero
-    HasZeroAcc:
-      function: metrics.mosi.binary_accuracy
-    HasZeroF1:
-      function: metrics.mosi.binary_f1_score
     ConfusionMatrix:
       function: sklearn.metrics.confusion_matrix
+      kwargs:
+        labels: [0, 1]

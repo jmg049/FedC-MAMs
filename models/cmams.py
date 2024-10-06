@@ -11,41 +11,42 @@ from torch.nn import (
     Module,
     ModuleDict,
     ModuleList,
-    MultiheadAttention,
-    Parameter,
     ReLU,
     Sequential,
 )
 
 from cmam_loss import CMAMLoss
 from models import MultimodalModelProtocol, resolve_encoder
+from models.utt_fusion_model import UttFusionModel
 from utils.metric_recorder import MetricRecorder
+from utils import de_device, print_gpu_memory
 
 
 class BasicCMAM(Module):
     def __init__(
         self,
         input_encoder_info: Dict[Modality, Dict[str, Any]],
-        target_modality: Modality | str,
+        target_modality: Modality,
         assoc_net_input_size: int,
         assoc_net_hidden_size: int,
         assoc_net_output_size: int,
+        metric_recorder: MetricRecorder,
         *,
         assoc_dropout: float = 0.0,
         assoc_use_bn: bool = False,
         fusion_fn: str = "concat",
         grad_clip: float = 0.0,
-        metric_recorder: MetricRecorder,
+        binarize: bool = False,
     ):
         super(BasicCMAM, self).__init__()
         self.encoders = ModuleDict()
         for modality, encoder_params in input_encoder_info.items():
             if isinstance(encoder_params, Module):
-                self.encoders[str(modality)] = encoder_params
+                self.encoders[modality] = encoder_params
                 continue
             encoder_cls = resolve_encoder(encoder_params["name"])
             encoder_params.pop("name")
-            self.encoders[str(modality)] = encoder_cls(**encoder_params)
+            self.encoders[modality] = encoder_cls(**encoder_params)
         assert (
             target_modality not in self.encoders
         ), "The target should not be in the input modalities"
@@ -71,9 +72,8 @@ class BasicCMAM(Module):
             case _:
                 raise ValueError(f"Unknown fusion function: {fusion_fn}")
 
-        self.predictions_metric_recorder = None
-        self.rec_metric_recorder = None
         self.grad_clip = grad_clip
+        self.binarize = binarize
 
     def to(self, device):
         super().to(device)
@@ -95,6 +95,8 @@ class BasicCMAM(Module):
         modalities: Union[Dict[Modality, torch.Tensor], torch.Tensor],
         return_z: bool = False,
     ) -> torch.Tensor:
+        
+        
         if isinstance(modalities, dict):
             embeddings = [
                 self.encoders[modality](data) for modality, data in modalities.items()
@@ -116,13 +118,18 @@ class BasicCMAM(Module):
         device: torch.device,
         trained_model: MultimodalModelProtocol,
     ):
+        
+        
         self.train()
         self.to(device)
-        target_modality = batch[str(self.target_modality)[0].upper()].float().to(device)
+        
+
+        target_modality = batch[self.target_modality].float().to(device)
         input_modalities = {
-            modality: batch[str(modality)[0].upper()].float().to(device)
+            modality: batch[Modality.from_str(modality)].float().to(device)
             for modality in self.encoders
         }
+        
 
         mi_input_modalities = [v.clone() for k, v in input_modalities.items()]
 
@@ -134,10 +141,14 @@ class BasicCMAM(Module):
             trained_model.eval()
             trained_encoder = trained_model.get_encoder(self.target_modality)
             target_embd = trained_encoder(target_modality.to(device))
+        
 
         # Ensure trained_model's parameters do not require gradients
         for param in trained_model.parameters():
             param.requires_grad = False
+
+        
+        
 
         # Zero the gradients
         optimizer.zero_grad()
@@ -149,7 +160,7 @@ class BasicCMAM(Module):
 
         # Prepare input for the pretrained model
         encoder_data = {
-            str(k)[0]: batch[str(k)[0].upper()].to(device=device)
+            str(k)[0].upper(): batch[Modality.from_str(k)].to(device=device)
             for k in self.encoders.keys()
         }
         m_kwargs = {
@@ -161,7 +172,44 @@ class BasicCMAM(Module):
         logits = trained_model(**m_kwargs, device=device)
         predictions = logits.argmax(dim=1)
 
-        pred_metrics = self.metric_recorder.calculate_metrics(predictions, labels)
+        
+
+
+        if self.binarize:
+            (
+                binary_preds,
+                binary_truth,
+                non_zeros_mask,
+            ) = UttFusionModel.msa_binarize(predictions.cpu().numpy(), labels)
+
+            binary_preds = de_device(binary_preds)
+            binary_truth = de_device(binary_truth)
+            non_zeros_mask = de_device(non_zeros_mask)
+
+            # Calculate metrics for all elements (including zeros)
+            binary_metrics = self.metric_recorder.calculate_metrics(
+                predictions=binary_preds, targets=binary_truth
+            )
+
+            # Calculate metrics for non-zero elements only using the non_zeros_mask
+            non_zeros_binary_preds = binary_preds[non_zeros_mask]
+            non_zeros_binary_truth = binary_truth[non_zeros_mask]
+
+            non_zero_metrics = self.metric_recorder.calculate_metrics(
+                predictions=non_zeros_binary_preds,
+                targets=non_zeros_binary_truth,
+            )
+
+            # Store the metrics in a dictionary
+            metrics = {}
+
+            for k, v in binary_metrics.items():
+                metrics[f"HasZero_{k}"] = v
+
+            for k, v in non_zero_metrics.items():
+                metrics[f"NonZero_{k}"] = v
+        else:
+            metrics = self.metric_recorder.calculate_metrics(predictions, labels)
 
         # Total loss and backward pass
         loss_dict = cmam_criterion(
@@ -184,10 +232,11 @@ class BasicCMAM(Module):
 
         other_losses = {k: v.item() for k, v in loss_dict.items() if k != "total_loss"}
 
+
         return {
             "loss": total_loss.item(),
             **other_losses,
-            **pred_metrics,
+            **metrics,
         }
 
     def evaluate(
@@ -204,11 +253,9 @@ class BasicCMAM(Module):
         self.to(device)
         trained_model.to(device)
         with torch.no_grad():
-            target_modality = (
-                batch[str(self.target_modality)[0].upper()].float().to(device)
-            )
+            target_modality = batch[self.target_modality].float().to(device)
             input_modalities = {
-                modality: batch[str(modality)[0].upper()].float().to(device)
+                modality: batch[Modality.from_str(modality)].float().to(device)
                 for modality in self.encoders
             }
             mi_input_modalities = [v.clone() for k, v in input_modalities.items()]
@@ -226,7 +273,7 @@ class BasicCMAM(Module):
             rec_embd = self.forward(input_modalities)
 
             encoder_data = {
-                str(k)[0]: batch[str(k)[0].upper()].to(device=device)
+                str(k)[0].upper(): batch[Modality.from_str(k)].to(device=device)
                 for k in self.encoders.keys()
             }
             m_kwargs = {
@@ -253,20 +300,66 @@ class BasicCMAM(Module):
                 k: v.item() for k, v in loss_dict.items() if k != "total_loss"
             }
 
-            ## cls metrics
-            pred_metrics = self.metric_recorder.calculate_metrics(predictions, labels)
-            miss_type = np.array(miss_type)
-            for m_type in set(miss_type):
-                mask = miss_type == m_type
-                mask_preds = predictions[mask]
-                mask_labels = labels[mask]
-                mask_metrics = self.metric_recorder.calculate_metrics(
-                    predictions=mask_preds,
-                    targets=mask_labels,
-                    skip_metrics=["ConfusionMatrix"],
-                )
-                for k, v in mask_metrics.items():
-                    pred_metrics[f"{k}_{m_type.replace('z', '').upper()}"] = v
+            if self.binarize:
+                (
+                    binary_preds,
+                    binary_truth,
+                    non_zeros_mask,
+                ) = UttFusionModel.msa_binarize(predictions.cpu().numpy(), labels)
+
+                binary_preds = de_device(binary_preds)
+                binary_truth = de_device(binary_truth)
+                non_zeros_mask = de_device(non_zeros_mask)
+
+                miss_types = np.array(miss_type)
+                metrics = {}
+                for miss_type in set(miss_types):
+                    mask = miss_types == miss_type
+
+                    # Apply the mask to get values for the current miss type
+                    binary_preds_masked = binary_preds[mask]
+                    binary_truth_masked = binary_truth[mask]
+                    non_zeros_mask_masked = non_zeros_mask[mask]
+
+                    # Calculate metrics for all elements (including zeros)
+                    binary_metrics = self.metric_recorder.calculate_metrics(
+                        predictions=binary_preds_masked, targets=binary_truth_masked
+                    )
+
+                    # Calculate metrics for non-zero elements only using the non_zeros_mask
+                    non_zeros_binary_preds_masked = binary_preds_masked[
+                        non_zeros_mask_masked
+                    ]
+                    non_zeros_binary_truth_masked = binary_truth_masked[
+                        non_zeros_mask_masked
+                    ]
+
+                    non_zero_metrics = self.metric_recorder.calculate_metrics(
+                        predictions=non_zeros_binary_preds_masked,
+                        targets=non_zeros_binary_truth_masked,
+                    )
+
+                    # Store metrics in the metrics dictionary
+                    for k, v in binary_metrics.items():
+                        metrics[f"HasZero_{k}_{miss_type.replace('z', '').upper()}"] = v
+
+                    for k, v in non_zero_metrics.items():
+                        metrics[f"NonZero_{k}_{miss_type.replace('z', '').upper()}"] = v
+            else:
+                metrics = self.metric_recorder.calculate_metrics(predictions, labels)
+                miss_type = np.array(miss_type)
+
+                for m_type in set(miss_type):
+                    mask = miss_type == m_type
+                    mask_preds = predictions[mask]
+                    mask_labels = labels[mask]
+                    mask_metrics = self.metric_recorder.calculate_metrics(
+                        predictions=mask_preds,
+                        targets=mask_labels,
+                        skip_metrics=["ConfusionMatrix"],
+                    )
+                    for k, metrics in mask_metrics.items():
+                        metrics[f"{k}_{m_type.replace('z', '').upper()}"] = v
             self.train()
 
             if return_eval_data:
@@ -277,13 +370,13 @@ class BasicCMAM(Module):
                     "labels": labels,
                     "rec_embd": rec_embd,
                     "target_embd": target_embd,
-                    **pred_metrics,
+                    **metrics,
                 }
 
             return {
                 "loss": total_loss.item(),
                 **other_losses,
-                **pred_metrics,
+                **metrics,
             }
 
 
@@ -294,7 +387,7 @@ class DualCMAM(Module):
 
     def __init__(
         self,
-        input_encoder_info: Dict[Modality, Dict[str, Any]],
+        input_encoder_info: dict[Modality, dict[str, Any]],
         shared_encoder_output_size: int,
         decoder_hidden_size: int,
         target_modality_one_embd_size: int,
@@ -303,9 +396,10 @@ class DualCMAM(Module):
         target_modality_one: Modality,
         target_modality_two: Modality,
         metric_recorder: MetricRecorder,
-        attention_heads: int = 2,
+        *,
         dropout: float = 0.1,
         grad_clip: float = 0.0,
+        binarize: bool = False,
     ):
         super(DualCMAM, self).__init__()
         self.target_modality_one = target_modality_one
@@ -319,13 +413,8 @@ class DualCMAM(Module):
             encoder_cls = resolve_encoder(encoder_params["name"])
             encoder_params.pop("name")
             encoders.append(encoder_cls(**encoder_params))
+
         self.input_encoder = encoders[0]
-        self.attention = MultiheadAttention(
-            embed_dim=shared_encoder_output_size,
-            num_heads=attention_heads,
-            dropout=dropout,
-            batch_first=True,
-        )
 
         self.decoders = ModuleList(
             [
@@ -345,8 +434,8 @@ class DualCMAM(Module):
         )
 
         self.grad_clip = grad_clip
-        self.modality_weights = Parameter(torch.tensor([1.0, 1.0]))
         self.metric_recorder = metric_recorder
+        self.binarize = binarize
 
     def reset_metric_recorders(self):
         self.metric_recorder.reset()
@@ -354,21 +443,15 @@ class DualCMAM(Module):
     def to(self, device):
         super().to(device)
         self.input_encoder.to(device)
-        self.attention.to(device)
         self.decoders.to(device)
         return self
 
     def forward(
         self, input_modality: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        input_embd = self.input_encoder(
-            input_modality
-        )  ## expects the encoder to produce a single, flat tensor with shape (batch_size, embd_size)
-
-        attention_encoding, _ = self.attention(input_embd, input_embd, input_embd)
-
-        reconstructed_embd_one = self.decoders[0](attention_encoding)
-        reconstructed_embd_two = self.decoders[1](attention_encoding)
+        input_embd = self.input_encoder(input_modality)
+        reconstructed_embd_one = self.decoders[0](input_embd)
+        reconstructed_embd_two = self.decoders[1](input_embd)
 
         return reconstructed_embd_one, reconstructed_embd_two
 
@@ -424,7 +507,37 @@ class DualCMAM(Module):
         logits = trained_model(**m_kwargs, device=device)
         predictions = logits.argmax(dim=1)
 
-        pred_metrics = self.metric_recorder.calculate_metrics(predictions, labels)
+        if self.binarize:
+            (
+                binary_preds,
+                binary_truth,
+                non_zeros_mask,
+            ) = UttFusionModel.msa_binarize(predictions.cpu().numpy(), labels)
+
+            # Calculate metrics for all elements (including zeros)
+            binary_metrics = self.metric_recorder.calculate_metrics(
+                predictions=binary_preds, targets=binary_truth
+            )
+
+            # Calculate metrics for non-zero elements only using the non_zeros_mask
+            non_zeros_binary_preds = binary_preds[non_zeros_mask.detach().cpu().numpy()]
+            non_zeros_binary_truth = binary_truth[non_zeros_mask.detach().cpu().numpy()]
+
+            non_zero_metrics = self.metric_recorder.calculate_metrics(
+                predictions=non_zeros_binary_preds,
+                targets=non_zeros_binary_truth,
+            )
+
+            # Store the metrics in a dictionary
+            metrics = {}
+
+            for k, v in binary_metrics.items():
+                metrics[f"HasZero_{k}"] = v
+
+            for k, v in non_zero_metrics.items():
+                metrics[f"NonZero_{k}"] = v
+        else:
+            metrics = self.metric_recorder.calculate_metrics(predictions, labels)
 
         rec_one_loss_dict = cmam_criterion(
             predictions=rec_embd_one,
@@ -446,10 +559,7 @@ class DualCMAM(Module):
             cls_labels=labels,
         )
 
-        total_loss = (
-            rec_one_loss_dict["total_loss"] * self.modality_weights[0]
-            + rec_two_loss_dict["total_loss"] * self.modality_weights[1]
-        )
+        total_loss = rec_one_loss_dict["total_loss"] + rec_two_loss_dict["total_loss"]
 
         total_loss.backward()
 
@@ -462,11 +572,13 @@ class DualCMAM(Module):
         rec_one_other_losses = {
             k: v.item() for k, v in rec_one_loss_dict.items() if k != "total_loss"
         }
+
         rec_two_other_losses = {
             k: v.item() for k, v in rec_two_loss_dict.items() if k != "total_loss"
         }
 
         other_losses = {f"rec_{k}_one": v for k, v in rec_one_other_losses.items()}
+
         other_losses.update(
             {f"rec_{k}_two": v for k, v in rec_two_other_losses.items()}
         )
@@ -474,7 +586,7 @@ class DualCMAM(Module):
         return {
             "loss": total_loss.item(),
             **other_losses,
-            **pred_metrics,
+            **metrics,
         }
 
     def evaluate(
@@ -519,11 +631,69 @@ class DualCMAM(Module):
                 f"is_embd_{str(self.target_modality_two)[0]}": True,
             }
 
-            # Compute logits without torch.no_grad()
             logits = trained_model(**m_kwargs, device=device)
             predictions = logits.argmax(dim=1)
 
-            pred_metrics = self.metric_recorder.calculate_metrics(predictions, labels)
+            if self.binarize:
+                (
+                    binary_preds,
+                    binary_truth,
+                    non_zeros_mask,
+                ) = UttFusionModel.msa_binarize(predictions.cpu().numpy(), labels)
+
+                miss_types = np.array(miss_type)
+                metrics = {}
+                for miss_type in set(miss_types):
+                    mask = miss_types == miss_type
+
+                    # Apply the mask to get values for the current miss type
+                    binary_truth = de_device(binary_truth)
+                    binary_preds = de_device(binary_preds)
+                    non_zeros_mask = de_device(non_zeros_mask)
+
+                    binary_preds_masked = binary_preds[mask]
+                    binary_truth_masked = binary_truth[mask]
+                    non_zeros_mask_masked = non_zeros_mask[mask]
+
+                    # Calculate metrics for all elements (including zeros)
+                    binary_metrics = self.metric_recorder.calculate_metrics(
+                        predictions=binary_preds_masked, targets=binary_truth_masked
+                    )
+
+                    # Calculate metrics for non-zero elements only using the non_zeros_mask
+                    non_zeros_binary_preds_masked = binary_preds_masked[
+                        non_zeros_mask_masked
+                    ]
+                    non_zeros_binary_truth_masked = binary_truth_masked[
+                        non_zeros_mask_masked
+                    ]
+
+                    non_zero_metrics = self.metric_recorder.calculate_metrics(
+                        predictions=non_zeros_binary_preds_masked,
+                        targets=non_zeros_binary_truth_masked,
+                    )
+
+                    # Store metrics in the metrics dictionary
+                    for k, v in binary_metrics.items():
+                        metrics[f"HasZero_{k}_{miss_type.replace('z', '').upper()}"] = v
+
+                    for k, v in non_zero_metrics.items():
+                        metrics[f"NonZero_{k}_{miss_type.replace('z', '').upper()}"] = v
+            else:
+                metrics = self.metric_recorder.calculate_metrics(predictions, labels)
+                miss_type = np.array(miss_type)
+
+                for m_type in set(miss_type):
+                    mask = miss_type == m_type
+                    mask_preds = predictions[mask]
+                    mask_labels = labels[mask]
+                    mask_metrics = self.metric_recorder.calculate_metrics(
+                        predictions=mask_preds,
+                        targets=mask_labels,
+                        skip_metrics=["ConfusionMatrix"],
+                    )
+                    for k, v in mask_metrics.items():
+                        metrics[f"{k}_{m_type.replace('z', '').upper()}"] = v
 
             rec_one_loss_dict = cmam_criterion(
                 predictions=rec_embd_one,
@@ -546,8 +716,7 @@ class DualCMAM(Module):
             )
 
             total_loss = (
-                rec_one_loss_dict["total_loss"] * self.modality_weights[0]
-                + rec_two_loss_dict["total_loss"] * self.modality_weights[1]
+                rec_one_loss_dict["total_loss"] + rec_two_loss_dict["total_loss"]
             )
 
             rec_one_other_losses = {
@@ -556,19 +725,6 @@ class DualCMAM(Module):
             rec_two_other_losses = {
                 k: v.item() for k, v in rec_two_loss_dict.items() if k != "total_loss"
             }
-
-            miss_type = np.array(miss_type)
-            for m_type in set(miss_type):
-                mask = miss_type == m_type
-                mask_preds = predictions[mask]
-                mask_labels = labels[mask]
-                mask_metrics = self.metric_recorder.calculate_metrics(
-                    predictions=mask_preds,
-                    targets=mask_labels,
-                    skip_metrics=["ConfusionMatrix"],
-                )
-                for k, v in mask_metrics.items():
-                    pred_metrics[f"{k}_{m_type.replace('z', '').upper()}"] = v
 
             ## merge the two loss dicts and give them a prefix
             other_losses = {f"rec_{k}_one": v for k, v in rec_one_other_losses.items()}
@@ -586,11 +742,11 @@ class DualCMAM(Module):
                     "rec_embd_two": rec_embd_two,
                     "target_embd_one": target_embd_one,
                     "target_embd_two": target_embd_two,
-                    **pred_metrics,
+                    **metrics,
                 }
 
             return {
                 "loss": total_loss.item(),
                 **other_losses,
-                **pred_metrics,
+                **metrics,
             }

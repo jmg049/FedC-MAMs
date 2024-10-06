@@ -25,10 +25,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-for run_id in $(seq 1 $runs); do
-    for modality in "text" "audio" "video"; do
-        python train_multimodal.py \
-            --config "${configs_root}/train_mosei_multimodal.yaml" \
-            --run_id $run_id
-    done
+for run_id in $(seq 1 "$runs"); do
+    python train_multimodal.py \
+        --config "${configs_root}/train_mosei_multimodal.yaml" \
+        --run_id "$run_id"
 done
