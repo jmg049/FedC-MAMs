@@ -6,7 +6,7 @@ data:
   train:
     dataset: "avmnist"
     data_fp: "DATA/avmnist/train_subset.csv"
-    target_modality: "multimodal"
+    target_modality: !Modality "multimodal"
     split: "train"
     shuffle: True
     drop_last: True
@@ -15,51 +15,54 @@ data:
   validation:
     dataset: "avmnist"
     data_fp: "DATA/avmnist/validation_subset.csv"
-    target_modality: "multimodal"
+    target_modality: !Modality "multimodal"
     split: "valid"
     drop_last: True
     pin_memory: True
+    selected_missing_types:
+      - "zi"
 
   test:
     dataset: "avmnist"
     data_fp: "DATA/avmnist/test_subset.csv"
-    target_modality: "multimodal"
+    target_modality: !Modality "multimodal"
     split: "test"
     drop_last: True
     pin_memory: True
+    selected_missing_types:
+      - "zi"
 
 
 model:
   name: "AVMNIST"
-  pretrained_path: "experiments/avmnist/models/AVMNIST (Classification): Baseline Training/{run_id}/avmnist_model_loss_best.pth"
-  kwargs:
-    audio_encoder: !MNISTAudio
-      conv_block_one_args: !ConvBlock
-        conv_one_in: 1
-        conv_one_out: 32
-      conv_block_two_args: !ConvBlock
-        conv_one_in: 32
-        conv_one_out: 32
-      conv_batch_norm: True
-      hidden_dim: 64
-    image_encoder: !MNISTImage
-      conv_block_one_one_args: !ConvBlock
-        conv_one_in: 1
-        conv_one_out: 32
-      conv_block_one_two_args: !ConvBlock
-        conv_one_in: 32
-        conv_one_out: 64
-      conv_block_two_one_args: !ConvBlock
-        conv_one_in: 64
-        conv_one_out: 64
-      conv_block_two_two_args: !ConvBlock
-        conv_one_in: 64
-        conv_one_out: 64
-      hidden_dim: 128
-      conv_batch_norm: True
+  pretrained_path: "experiments/avmnist/models/AVMNIST_(Classification):_Baseline_Training/{run_id}/avmnist_model__loss_best.pth"
+  audio_encoder: !MNISTAudio
+    conv_block_one_args: !ConvBlock
+      conv_one_in: 1
+      conv_one_out: 32
+    conv_block_two_args: !ConvBlock
+      conv_one_in: 32
+      conv_one_out: 32
+    conv_batch_norm: True
+    hidden_dim: 64
+  image_encoder: !MNISTImage
+    conv_block_one_one_args: !ConvBlock
+      conv_one_in: 1
+      conv_one_out: 32
+    conv_block_one_two_args: !ConvBlock
+      conv_one_in: 32
+      conv_one_out: 64
+    conv_block_two_one_args: !ConvBlock
+      conv_one_in: 64
+      conv_one_out: 64
+    conv_block_two_two_args: !ConvBlock
+      conv_one_in: 64
+      conv_one_out: 64
     hidden_dim: 128
-    dropout: 0.5
-    fusion_fn: "concat"
+    conv_batch_norm: True
+  hidden_dim: 128
+  dropout: 0.5
+  fusion_fn: "concat"
 
 
 cmam:
@@ -80,17 +83,17 @@ cmam:
         conv_one_out: 64
       hidden_dim: 128
       conv_batch_norm: True
-  target_modality: "Audio"
+  target_modality: !Modality "audio"
   assoc_net_input_size: 128
   assoc_net_hidden_size: 256
   assoc_net_output_size: 64
   assoc_dropout: 0.4
   assoc_use_bn: True 
-  grad_clip: 0.5
+  target_missing_type: "zi"
 
 training:
   epochs: 25
-  num_modalities: 3
+  num_modalities: 2
   batch_size: 256
   optimizer: "adam"
   optim_kwargs:
@@ -105,13 +108,7 @@ training:
     cls_weight: 0.05
     rec_weight: 1.0
   target_missing_type: "zi"
-  scheduler: "lambda"
-  scheduler_args:
-    lr_lambda: "lambda epoch: 1.0 - max(0, epoch + epoch_count - niter) / float(niter_decay + 1)"
-    epoch_count: 1
-    niter: 10
-    niter_decay: 10
-  do_tsne: True
+  do_tsne: False
   early_stopping: True
   early_stopping_patience: 5
   early_stopping_min_delta: 0.001
@@ -119,8 +116,8 @@ training:
 logging:
   save_metric: "loss"
   log_path: "experiments/avmnist/logs/{experiment_name}/{run_id}/"
-  model_output_path: "experiments/avmnist/models/{experiment_name}/cmam_I_To_A_{save_metric}_{run_id}.pth" 
-  metrics_paths: "experiments/avmnist/metrics/{experiment_name}/{run_id}/cmam_I_to_A"
+  model_output_path: "experiments/avmnist/models/{experiment_name}/{run_id}/cmam_I_To_A_{save_metric}.pth" 
+  metrics_path: "experiments/avmnist/metrics/{experiment_name}/{run_id}/cmam_I_to_A"
 
 metrics:
   prediction_metrics:

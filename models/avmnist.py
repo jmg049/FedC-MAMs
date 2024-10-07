@@ -1,21 +1,22 @@
 from functools import partial
 from typing import Any, Dict
+
 import numpy as np
-from torch import Tensor
-from torch.nn.functional import softmax
 import torch
+from modalities import Modality
+from torch import Tensor
 from torch.nn import (
-    Module,
-    Sequential,
-    ReLU,
-    Linear,
-    MaxPool2d,
     Dropout,
     Flatten,
     Identity,
+    Linear,
+    MaxPool2d,
+    Module,
+    ReLU,
+    Sequential,
 )
+from torch.nn.functional import softmax
 from torch.optim import Optimizer
-from modalities import Modality
 
 from models import ConvBlock, ConvBlockArgs
 from utils.metric_recorder import MetricRecorder
@@ -120,6 +121,7 @@ class AVMNIST(Module):
         metric_recorder: MetricRecorder,
         dropout: float = 0.0,
         fusion_fn: str = "concat",
+        **kwargs,
     ):
         super(AVMNIST, self).__init__()
 
@@ -196,9 +198,9 @@ class AVMNIST(Module):
         criterion: Module,
         device: torch.device,
     ) -> Dict:
-        A, I, labels, missing_index, _miss_type = (
-            batch["A"],
-            batch["I"],
+        A, I, labels, missing_index, miss_type = (
+            batch[Modality.AUDIO],
+            batch[Modality.IMAGE],
             batch["label"],
             batch["missing_index"],
             batch["miss_type"],
@@ -230,19 +232,38 @@ class AVMNIST(Module):
         predictions = softmax(logits, dim=1).argmax(dim=1)
 
         labels = labels.detach().cpu().numpy()
+        predictions = predictions.detach().cpu().numpy()
         metrics = {}
-        metrics = self.metric_recorder.calculate_metrics(
-            predictions.detach().cpu().numpy(), labels
-        )
+        miss_type = np.array(miss_type)
+        for m_type in set(miss_type):
+            mask = miss_type == m_type
+            mask_preds = predictions[mask]
+            mask_labels = labels[mask]
+            mask_metrics = self.metric_recorder.calculate_metrics(
+                predictions=mask_preds, targets=mask_labels
+            )
+            for k, v in mask_metrics.items():
+                metrics[f"{k}_{m_type.replace('z', '').upper()}"] = v
         return {"loss": loss.item(), **metrics}
 
-    def evaluate(self, batch, criterion: Module, device: torch.device) -> Dict:
+    def evaluate(
+        self,
+        batch,
+        criterion: Module,
+        device: torch.device,
+        return_test_info: bool = False,
+    ) -> Dict:
         self.eval()
+
+        if return_test_info:
+            all_predictions = []
+            all_labels = []
+            all_miss_types = []
 
         with torch.no_grad():
             A, I, labels, missing_index, miss_type = (
-                batch["A"],
-                batch["I"],
+                batch[Modality.AUDIO],
+                batch[Modality.IMAGE],
                 batch["label"],
                 batch["missing_index"],
                 batch["miss_type"],
@@ -270,10 +291,15 @@ class AVMNIST(Module):
             labels = labels.detach().cpu().numpy()
             predictions = softmax(logits, dim=1).argmax(dim=1)
 
-            metrics = self.metric_recorder.calculate_metrics(
-                predictions=predictions, targets=labels
-            )
+            if return_test_info:
+                all_predictions.append(predictions.cpu().numpy())
+                all_labels.append(labels)
+                all_miss_types.append(miss_type)
 
+            # metrics = self.metric_recorder.calculate_metrics(
+            #     predictions=predictions, targets=labels
+            # )
+            metrics = {}
             miss_type = np.array(miss_type)
             for m_type in set(miss_type):
                 mask = miss_type == m_type
@@ -286,6 +312,15 @@ class AVMNIST(Module):
                     metrics[f"{k}_{m_type.replace('z', '').upper()}"] = v
 
         self.train()
+
+        if return_test_info:
+            return {
+                "loss": loss.item(),
+                **metrics,
+                "predictions": all_predictions,
+                "labels": all_labels,
+                "miss_types": all_miss_types,
+            }
         return {
             "loss": loss.item(),
             **metrics,

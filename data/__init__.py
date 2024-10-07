@@ -1,3 +1,4 @@
+import os
 import time
 from typing import Any, Dict
 
@@ -9,11 +10,16 @@ from config import DataConfig
 from data.avmnist import AVMNISTDataSet
 from data.cmu_mosei_miss_dataset import cmumoseimissdataset
 from data.federated_dataset import FederatedDataSplitter, FederatedDatasetWrapper
+from utils import get_logger
+
+logger = get_logger()
 
 
 def create_federated_datasets(
     num_clients: int,
     data_config,
+    indices_save_dir: str = None,
+    indices_load_dir: str = None,
 ):
     """
     Create federated datasets for train, validation, and test splits.
@@ -53,36 +59,47 @@ def create_federated_datasets(
     federated_datasets = {}
     iid_metrics = {}
 
+    sampling_strategy = data_config.sampling_strategy
+    alpha = data_config.alpha
+    global_fraction = data_config.global_fraction
+    # _min_samples_per_client = data_config.min_samples_per_client
+    get_label_fn = data_config.get_label_fn
+    random_seed = time.time()
+    client_proportions = data_config.client_proportions
+
     for data_split in data_config.datasets:
         dataset_config = data_config.datasets[data_split]
-
-        # Resolve the dataset class based on the dataset name
         dataset_cls = resolve_dataset_name(dataset_config.dataset)
 
-        # Extract base dataset arguments
         base_dataset_args = {
             k: v
             for k, v in dataset_config
             if k not in dataloader_specific_args + federated_specific_args + ["dataset"]
         }
 
-        # Create the base dataset
+        # Ensure only one miss type for training
+        if data_split == "train":
+            base_dataset_args["selected_missing_types"] = [
+                base_dataset_args["selected_missing_types"][0]
+            ]
+
         base_dataset = dataset_cls(**base_dataset_args)
-        print(f"{dataset_cls.__name__} dataset '{data_split}' created")
+        print(f"{dataset_cls.__name__} dataset {data_split} created")
+        logger.info(f"{dataset_cls.__name__} dataset {data_split} created")
+        # Save indices
+        if indices_save_dir is not None:
+            _indices_save_dir = os.path.join(
+                indices_save_dir, f"dataset_indices_{data_split}"
+            )
 
-        # Extract federated-specific arguments for this dataset
-        sampling_strategy = data_config.sampling_strategy
-        alpha = data_config.alpha
-        global_fraction = data_config.global_fraction
-        _min_samples_per_client = data_config.min_samples_per_client
-        get_label_fn = data_config.get_label_fn
-        random_seed = time.time()
-        client_proportions = data_config.client_proportions
+        if indices_load_dir is not None:
 
-        if client_proportions is None:
-            client_proportions = [round(1 / num_clients, 3)] * num_clients
+            _indices_load_dir = os.path.join(
+                indices_load_dir, f"dataset_indices_{data_split}"
+            )
+        else:
+            _indices_load_dir = None
 
-        # Create the data splitter
         splitter = FederatedDataSplitter(
             dataset=base_dataset,
             num_clients=num_clients,
@@ -91,36 +108,39 @@ def create_federated_datasets(
             get_label_fn=get_label_fn,
             global_fraction=global_fraction,
             random_seed=random_seed,
-            client_proportions=client_proportions,
+            indices_load_dir=_indices_load_dir,
         )
+        print(f"FederatedDataSplitter created for {data_split}")
+        logger.info(f"FederatedDataSplitter created for {data_split}")
 
-        # Create the global dataset
-        global_indices = splitter.get_global_indices()
+        if indices_load_dir is None:
+            splitter.save_indices(_indices_save_dir)
+
+        # Create global and client datasets
         global_dataset = FederatedDatasetWrapper(
             dataset=base_dataset,
-            indices=global_indices,
+            indices=splitter.get_global_indices(),
             get_label_fn=get_label_fn,
         )
 
-        # Create client datasets
         client_datasets = []
-        for client_id in range(1, num_clients + 1):
-            client_indices = splitter.get_client_indices(client_id)
+        for client_id in range(num_clients):
             client_dataset = FederatedDatasetWrapper(
                 dataset=base_dataset,
-                indices=client_indices,
+                indices=splitter.get_client_indices(client_id),
                 get_label_fn=get_label_fn,
             )
             client_datasets.append(client_dataset)
+
+        federated_datasets[data_split] = {
+            "global": global_dataset,
+            "clients": client_datasets,
+        }
 
         # Calculate IID metrics
         metrics = splitter.calculate_iid_metrics()
 
         # Store the datasets and metrics
-        federated_datasets[data_split] = {
-            "global": global_dataset,
-            "clients": client_datasets,
-        }
         iid_metrics[data_split] = metrics
 
     # Extract datasets and metrics for each split

@@ -6,7 +6,7 @@ data:
   train:
     dataset: "avmnist"
     data_fp: "DATA/avmnist/train_subset.csv"
-    target_modality: "multimodal"
+    target_modality: !Modality "multimodal"
     split: "train"
     shuffle: True
     drop_last: True
@@ -15,7 +15,7 @@ data:
   validation:
     dataset: "avmnist"
     data_fp: "DATA/avmnist/validation_subset.csv"
-    target_modality: "multimodal"
+    target_modality: !Modality "multimodal"
     split: "valid"
     drop_last: True
     pin_memory: True
@@ -23,45 +23,44 @@ data:
   test:
     dataset: "avmnist"
     data_fp: "DATA/avmnist/test_subset.csv"
-    target_modality: "multimodal"
+    target_modality: !Modality "multimodal"
     split: "test"
     drop_last: True
     pin_memory: True
 
 model:
   name: "AVMNIST"
-  kwargs:
-    audio_encoder: !MNISTAudio
-      conv_block_one_args: !ConvBlock
-        conv_one_in: 1
-        conv_one_out: 32
-      conv_block_two_args: !ConvBlock
-        conv_one_in: 32
-        conv_one_out: 32
-      conv_batch_norm: True
-      hidden_dim: 64
-    image_encoder: !MNISTImage
-      conv_block_one_one_args: !ConvBlock
-        conv_one_in: 1
-        conv_one_out: 32
-      conv_block_one_two_args: !ConvBlock
-        conv_one_in: 32
-        conv_one_out: 64
-      conv_block_two_one_args: !ConvBlock
-        conv_one_in: 64
-        conv_one_out: 64
-      conv_block_two_two_args: !ConvBlock
-        conv_one_in: 64
-        conv_one_out: 64
-      hidden_dim: 128
-      conv_batch_norm: True
+  audio_encoder: !MNISTAudio
+    conv_block_one_args: !ConvBlock
+      conv_one_in: 1
+      conv_one_out: 32
+    conv_block_two_args: !ConvBlock
+      conv_one_in: 32
+      conv_one_out: 32
+    conv_batch_norm: True
+    hidden_dim: 64
+  image_encoder: !MNISTImage
+    conv_block_one_one_args: !ConvBlock
+      conv_one_in: 1
+      conv_one_out: 32
+    conv_block_one_two_args: !ConvBlock
+      conv_one_in: 32
+      conv_one_out: 64
+    conv_block_two_one_args: !ConvBlock
+      conv_one_in: 64
+      conv_one_out: 64
+    conv_block_two_two_args: !ConvBlock
+      conv_one_in: 64
+      conv_one_out: 64
     hidden_dim: 128
-    dropout: 0.5
-    fusion_fn: "concat"
+    conv_batch_norm: True
+  hidden_dim: 128
+  dropout: 0.5
+  fusion_fn: "concat"
 
 training:
   mode: "baseline"
-  epochs:  35
+  epochs:  25
   batch_size: 128
   optimizer: "adam"
   optim_kwargs:
@@ -75,15 +74,15 @@ training:
     niter: 10
     niter_decay: 10
   early_stopping: True
-  early_stopping_patience: 5
+  early_stopping_patience: 6
   early_stopping_min_delta: 0.001
-  do_validation_visualization: True
+  do_validation_visualization: False
 
 logging:
   save_metric: "loss"
   log_path: "experiments/avmnist/logs/{experiment_name}/{run_id}/"
   model_output_path: "experiments/avmnist/models/{experiment_name}/{run_id}/avmnist_model_{save_metric}.pth" 
-  metrics_paths: "experiments/avmnist/metrics/{experiment_name}/{run_id}"
+  metrics_path: "experiments/avmnist/metrics/{experiment_name}/{run_id}"
 
 
 metrics:
@@ -132,3 +131,7 @@ metrics:
       kwargs:
         average: "micro"
         zero_division: 0
+    ConfusionMatrix:
+      function: "sklearn.metrics.confusion_matrix"
+      kwargs:
+        labels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]

@@ -7,7 +7,7 @@ data:
   test:
     dataset: "avmnist"
     data_fp: "DATA/avmnist/test_subset.csv"
-    target_modality: "multimodal"
+    target_modality: !Modality "multimodal"
     split: "test"
     drop_last: True
     pin_memory: True
@@ -67,7 +67,7 @@ logging:
   save_metric: "loss"
   log_path: "experiments/avmnist/logs/{experiment_name}/{run_id}/"
   model_output_path: "experiments/avmnist/models/{experiment_name}/{run_id}/avmnist_model_{save_metric}.pth" 
-  metrics_paths: "experiments/avmnist/metrics/{experiment_name}/{run_id}"
+  metrics_path: "experiments/avmnist/metrics/{experiment_name}/{run_id}"
 
 
 metrics:

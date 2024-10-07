@@ -95,15 +95,12 @@ class cmumoseimissdataset(Dataset):
             self.miss_type = list(INDEX_LOOKUP.keys())
         if not isinstance(target_modality, Modality):
             target_modality = Modality.from_str(target_modality)
-        assert (
-            target_modality
-            in [
-                Modality.AUDIO,
-                Modality.TEXT,
-                Modality.VIDEO,
-                Modality.MULTIMODAL,
-            ]
-        ), f"Invalid target_modality: {target_modality}, must be one of [{Modality.AUDIO}, {Modality.TEXT}, {Modality.VIDEO}, {Modality.MULTIMODAL}]"
+        assert target_modality in [
+            Modality.AUDIO,
+            Modality.TEXT,
+            Modality.VIDEO,
+            Modality.MULTIMODAL,
+        ], f"Invalid target_modality: {target_modality}, must be one of [{Modality.AUDIO}, {Modality.TEXT}, {Modality.VIDEO}, {Modality.MULTIMODAL}]"
         self.target_modality = target_modality
         # set collate function
         self.manual_collate_fn = True

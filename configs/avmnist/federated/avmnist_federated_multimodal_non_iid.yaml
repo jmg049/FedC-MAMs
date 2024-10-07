@@ -8,7 +8,7 @@ data:
   train:
     dataset: "avmnist"
     data_fp: "DATA/avmnist/train_subset.csv"
-    target_modality: "multimodal"
+    target_modality: !Modality "multimodal"
     split: "train"
     shuffle: True
     drop_last: True
@@ -16,14 +16,14 @@ data:
   validation:
     dataset: "avmnist"
     data_fp: "DATA/avmnist/validation_subset.csv"
-    target_modality: "multimodal"
+    target_modality: !Modality "multimodal"
     split: "valid"
     drop_last: True
     pin_memory: True
   test:
     dataset: "avmnist"
     data_fp: "DATA/avmnist/test_subset.csv"
-    target_modality: "multimodal"
+    target_modality: !Modality "multimodal"
     split: "test"
     drop_last: True
     pin_memory: True
@@ -35,7 +35,7 @@ data:
 
 federated: 
   server_config: !FederatedServerConfig
-    num_clients: 30 # for avmnist subset this is 588 samples per client with the global model have 360 samples
+    num_clients: 50 # for avmnist subset this is 588 samples per client with the global model have 360 samples
     rounds: 15  # Suggested number of federated rounds
     aggregation_strategy: "fedavg"
     optimizer: "Adam"
@@ -45,11 +45,11 @@ federated:
     criterion: "cross_entropy"
     criterion_kwargs: {}
     epochs: 1
-    logging_config: 
+    logging: 
       save_metric: "loss"
       log_path: "experiments/avmnist_federated/logs/{experiment_name}{alpha}/{run_id}/global/"
       model_output_path: "experiments/avmnist_federated/models/{experiment_name}{alpha}/{run_id}/global/{round}/avmnist_federated_model_{save_metric}.pth"
-      metrics_paths: "experiments/avmnist_federated/metrics/{experiment_name}{alpha}/{run_id}/global/{round}"
+      metrics_path: "experiments/avmnist_federated/metrics/{experiment_name}{alpha}/{run_id}/global/{round}"
     early_stopping: False
     early_stopping_patience: 10
     early_stopping_metric: "loss"
@@ -95,7 +95,7 @@ federated:
       save_metric: "loss"
       log_path: "experiments/avmnist_federated/logs/{experiment_name}{alpha}/{run_id}/client_{client_id}/"
       model_output_path: "experiments/avmnist_federated/models/{experiment_name}{alpha}/{run_id}/client_{client_id}/avmnist_federated_model_{save_metric}.pth"
-      metrics_paths: "experiments/avmnist_federated/metrics/{experiment_name}{alpha}/{run_id}/client_{client_id}/"
+      metrics_path: "experiments/avmnist_federated/metrics/{experiment_name}{alpha}/{run_id}/client_{client_id}/"
     local_batch_size: 128
     early_stopping: False
     early_stopping_patience: 10

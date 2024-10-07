@@ -4,6 +4,7 @@ import logging
 import os
 from pprint import pformat
 
+from numpy import ndarray
 import torch
 from modalities import add_modality
 from rich.console import Console
@@ -69,7 +70,9 @@ def main(config: FederatedConfig):
         test_dataset,
         test_iid,
     ) = create_federated_datasets(
-        num_clients=num_clients, data_config=config.data_config
+        num_clients=num_clients,
+        data_config=config.data_config,
+        indices_save_dir=os.path.dirname(config.logging.iid_metrics_path),
     )
 
     console.print("Federated Datasets created successfully")
@@ -210,6 +213,11 @@ def main(config: FederatedConfig):
         config.server_config.logging.metrics_path.format_map(SafeDict(round="")),
         "best_test_metrics.json",
     )
+
+    for k, v in results["final_test_results"].items():
+        if isinstance(v, ndarray):
+            results["final_test_results"][k] = v.tolist()
+
     with open(final_metrics_path, "w") as f:
         json_str = json.dumps(results["final_test_results"], indent=4)
         f.write(json_str)

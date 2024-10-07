@@ -14,7 +14,7 @@ from config.federated_cmam_config import FederatedCMAMConfig
 from federated import FederatedResult
 from federated.client import FederatedMultimodalClient
 from models import CMAMProtocol, MultimodalModelProtocol
-from utils import SafeDict, print_all_metrics_tables
+from utils import SafeDict, display_training_metrics, display_validation_metrics
 
 from utils import get_logger
 
@@ -131,7 +131,11 @@ class FederatedCongruentCMAMServer:
         metric_recorder = self.global_cmam.metric_recorder.clone()
         for batch in tqdm(data, desc="Evaluating global model", ascii=True):
             eval_results = self.global_cmam.evaluate(
-                batch=batch, device=self.device, criterion=criterion
+                batch=batch,
+                device=self.device,
+                cmam_criterion=criterion,
+                labels=batch["label"],
+                trained_model=self.global_model,
             )
             metric_recorder.update_from_dict(eval_results)
         return metric_recorder.get_average_metrics(
@@ -185,18 +189,11 @@ class FederatedCongruentCMAMServer:
                 )
                 epoch_metric_recorder.update_from_dict(train_results)
 
-            train_cm = epoch_metric_recorder.get("ConfusionMatrix", default=None)
-            if train_cm is not None:
-                train_cm = np.sum(train_cm, axis=0)
-                tqdm.write(str(train_cm))
-                del epoch_metric_recorder.results["ConfusionMatrix"]
             global_train_metrics = epoch_metric_recorder.get_average_metrics()
             print_fn("Global model training metrics")
-            print_all_metrics_tables(
+            display_training_metrics(
                 metrics=global_train_metrics,
                 console=None,
-                max_cols_per_row=16,
-                max_width=20,
             )
 
             print_fn("Finished training global model")
@@ -221,12 +218,6 @@ class FederatedCongruentCMAMServer:
                 )
                 epoch_metric_recorder.update_from_dict(val_results)
 
-            validation_cm = epoch_metric_recorder.get("ConfusionMatrix", default=None)
-            if validation_cm is not None:
-                validation_cm = np.sum(validation_cm, axis=0)
-                tqdm.write(str(validation_cm))
-                del epoch_metric_recorder.results["ConfusionMatrix"]
-
             validation_metrics = epoch_metric_recorder.get_average_metrics(
                 save_to=self.config.server_config.logging.metrics_path.format_map(
                     SafeDict(round=str(self.current_round))
@@ -234,11 +225,9 @@ class FederatedCongruentCMAMServer:
                 epoch="pre_aggregation",
             )
             print_fn("Global model validation metrics")
-            print_all_metrics_tables(
+            display_validation_metrics(
                 metrics=validation_metrics,
                 console=None,
-                max_cols_per_row=16,
-                max_width=20,
             )
 
             model_state_dict = self.global_cmam.state_dict()
@@ -262,29 +251,28 @@ class FederatedCongruentCMAMServer:
             ).replace(".pth", f"_{epoch}.pth")
 
             print_fn(f"Epoch {epoch} saved at {p}")
+
+            save_metric = self.config.server_config.logging.save_metric.replace(
+                "_", "", 1
+            )
             # EARLY STOPPING - Based on the target metric
+
             if self.config.server_config.early_stopping:
                 patience = (
                     self.config.server_config.early_stopping_patience
                 )  # Number of epochs to wait for improvement
                 min_delta = self.config.server_config.early_stopping_min_delta
                 # Determine whether we are minimizing or maximizing the metric
-                if self.config.server_config.logging.save_metric == "loss":
+                if save_metric == "loss":
                     improvement = (
-                        best_metrics[self.config.server_config.logging.save_metric]
-                        - validation_metrics[
-                            self.config.server_config.logging.save_metric
-                        ]
+                        best_metrics[save_metric] - validation_metrics[save_metric]
                     )
                     print_fn(
-                        f"Improvement: {improvement}, Best: {best_metrics[self.config.server_config.logging.save_metric]}, Current: {validation_metrics[self.config.server_config.logging.save_metric]}"
+                        f"Improvement: {improvement}, Best: {best_metrics[save_metric]}, Current: {validation_metrics[save_metric]}"
                     )
                 else:
                     improvement = (
-                        validation_metrics[
-                            self.config.server_config.logging.save_metric
-                        ]
-                        - best_metrics[self.config.server_config.logging.save_metric]
+                        validation_metrics[save_metric] - best_metrics[save_metric]
                     )  # Improvement means increase
 
                 if epoch > patience:
@@ -296,26 +284,21 @@ class FederatedCongruentCMAMServer:
 
                         break
 
-            if self.config.server_config.logging.save_metric == "loss":
+            if save_metric == "loss":
                 if validation_metrics["loss"] < best_eval_loss:
                     print_fn(f"New best model found at epoch {epoch}")
                     best_eval_epoch = epoch
                     best_eval_loss = validation_metrics["loss"]
                     best_metrics = validation_metrics
             else:
-                target_metric = validation_metrics[
-                    self.config.server_config.logging.save_metric
-                ]
-                if (
-                    target_metric
-                    > best_metrics[self.config.server_config.logging.save_metric]
-                ):
+                target_metric = validation_metrics[save_metric]
+                if target_metric > best_metrics[save_metric]:
                     print_fn(f"New best model found at epoch {epoch}")
                     best_eval_epoch = epoch
                     best_metrics = validation_metrics
 
         print_fn(
-            f"Best eval epoch was {best_eval_epoch} with a {self.config.server_config.logging.save_metric} of {best_metrics[self.config.server_config.logging.save_metric]}"
+            f"Best eval epoch was {best_eval_epoch} with a {save_metric} of {best_metrics[save_metric]}"
         )
 
         print_fn("Global Model Training complete: Round: ", self.current_round)
@@ -379,11 +362,9 @@ class FederatedCongruentCMAMServer:
 
             global_performance = round_results["global_model_performance"]
             print_fn("Global model performance after aggregation:")
-            print_all_metrics_tables(
+            display_validation_metrics(
                 metrics=global_performance,
                 console=None,
-                max_cols_per_row=16,
-                max_width=20,
             )
 
             os.makedirs(
@@ -392,6 +373,10 @@ class FederatedCongruentCMAMServer:
                 ),
                 exist_ok=True,
             )
+
+            for k, v in global_performance.items():
+                if isinstance(v, np.ndarray):
+                    global_performance[k] = v.tolist()
 
             with open(
                 os.path.join(
@@ -453,11 +438,9 @@ class FederatedCongruentCMAMServer:
 
         print_fn("Training complete")
         print_fn(f"Best round: {best_round} with {save_metric} of {best_metric_value}")
-        print_all_metrics_tables(
+        display_validation_metrics(
             metrics=best_global_performance,
             console=None,
-            max_cols_per_row=16,
-            max_width=20,
         )
 
         # Load the best model for final evaluation
@@ -475,11 +458,9 @@ class FederatedCongruentCMAMServer:
         )
 
         print_fn("Final test results for the best global model:")
-        print_all_metrics_tables(
+        display_validation_metrics(
             metrics=final_test_results,
             console=None,
-            max_cols_per_row=16,
-            max_width=20,
         )
 
         return {

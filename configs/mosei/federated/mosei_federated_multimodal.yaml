@@ -8,18 +8,18 @@ data:
     train:
       dataset: "mosei"
       data_fp: "DATA/MOSEI/aligned_50.pkl"
-      target_modality: "multimodal"
+      target_modality: !Modality "multimodal"
       split: "train"
     validation:
       dataset: "mosei"
       data_fp: "DATA/MOSEI/aligned_50.pkl"
-      target_modality: "multimodal"
+      target_modality: !Modality "multimodal"
       split: "valid"
       shuffle: True
     test:
       dataset: "mosei"
       data_fp: "DATA/MOSEI/aligned_50.pkl"
-      target_modality: "multimodal"
+      target_modality: !Modality "multimodal"
       split: "test"
       shuffle: True
     global_fraction: 0.1

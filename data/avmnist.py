@@ -14,6 +14,12 @@ MASK_LOOKUP = {
     2: "zi",
 }
 
+INDEX_LOOKUP = {
+    "ai": "1,1",
+    "az": "1,0",
+    "zi": "0,1",
+}
+
 
 class AVMNISTDataSet(Dataset):
     NUM_CLASSES = 10
@@ -22,10 +28,12 @@ class AVMNISTDataSet(Dataset):
         self,
         data_fp: str,
         split: str,
-        target_modality: Modality | str = Modality.MULTIMODAL,
+        target_modality: Modality = Modality.MULTIMODAL,
         audio_column: str = "audio",
         image_column: str = "image",
         labels_column: str = "label",
+        selected_missing_types: list[str] = None,
+        split_indices: list[int] = None,
         **kwargs,
     ):
         super(AVMNISTDataSet, self).__init__()
@@ -37,105 +45,61 @@ class AVMNISTDataSet(Dataset):
         ], f"Invalid split: {split}, must be one of ['train', 'valid', 'test']"
         self.split = split
         self.data = pd.read_csv(data_fp)
-        self.modality = target_modality
+        if split_indices is not None:
+            self.data = self.data.iloc[split_indices]
         self.audio_column = audio_column
         self.image_column = image_column
         self.labels_column = labels_column
 
-        assert (
-            self.audio_column in self.data.columns
-        ), f"{self.audio_column} not in data columns"
-        assert (
-            self.image_column in self.data.columns
-        ), f"{self.image_column} not in data columns"
-        assert (
-            self.labels_column in self.data.columns
-        ), f"{self.labels_column} not in data columns"
-
         self.pil_to_tensor = PILToTensor()
         self.scale = ToDtype(torch.float32, True)
 
-        if split != "train":
-            self.missing_index = torch.tensor(
-                [
-                    [1, 0],  # AZ
-                    [0, 1],  # ZI
-                    [1, 1],  # AI
-                ]
-                * len(self.data)
-            ).long()
-            self.miss_type = ["az", "zi", "ai"] * len(self.data)
-        else:
-            self.missing_index = [
-                [1, 0],  # AZ
-                [0, 1],  # ZI
-                [1, 1],  # AI
-            ]
-
-            self.miss_type = ["az", "zi", "ai"]
+        if selected_missing_types is None:
+            selected_missing_types = ["ai"]
+        self.selected_missing_types = selected_missing_types
 
         if not isinstance(target_modality, Modality):
-            modality = Modality.from_str(target_modality)
-        assert modality in [
+            target_modality = Modality.from_str(target_modality)
+        assert target_modality in [
             Modality.AUDIO,
             Modality.IMAGE,
             Modality.MULTIMODAL,
-        ], f"Invalid modality: {modality}, must be one of [{Modality.AUDIO}, {Modality.IMAGE}, {Modality.MULTIMODAL}]"
+        ], f"Invalid target_modality: {target_modality}"
 
-        self.target_modality = modality
+        self.target_modality = target_modality
 
     def __len__(self):
-        return len(self.missing_index) if self.split != "train" else len(self.data)
+        return len(self.data) * len(self.selected_missing_types)
 
     def __getitem__(self, index):
-        if self.split != "train":
-            feat_idx = index // 3  # totally 3 missing types
-            missing_index = self.missing_index[index]
-            miss_type = self.miss_type[index]
-        else:
-            feat_idx = index
-            _miss_i = np.random.choice(list(range(len(self.missing_index))))
-            missing_index = (
-                torch.tensor(self.missing_index[_miss_i]).clone().detach().long()
-            )
-            miss_type = self.miss_type[_miss_i]
-        label = torch.tensor(self.data.iloc[feat_idx][self.labels_column])
+        data_index = index // len(self.selected_missing_types)
+        miss_type_index = index % len(self.selected_missing_types)
+        miss_type = self.selected_missing_types[miss_type_index]
 
-        A = self.data.iloc[feat_idx][self.audio_column]
+        label = torch.tensor(self.data.iloc[data_index][self.labels_column])
+
+        A = self.data.iloc[data_index][self.audio_column]
         A = torch.load(A, weights_only=True)
 
-        I = self.data.iloc[feat_idx][self.image_column]
+        I = self.data.iloc[data_index][self.image_column]
         I = np.array(torch.load(I, weights_only=False))
         I = Image.fromarray(np.uint8(cm.gist_earth(I) * 255)).convert("L")
         I = self.pil_to_tensor(I)
         I = self.scale(I)
 
-        match self.target_modality:
-            case Modality.AUDIO:
-                return {
-                    "Audio": A,
-                    "label": label,
-                    "missing_index": missing_index,
-                    "miss_type": miss_type,
-                }
-            case Modality.IMAGE:
-                return {
-                    "Image": I,
-                    "label": label,
-                    "missing_index": missing_index,
-                    "miss_type": miss_type,
-                }
-            case Modality.MULTIMODAL:
-                return {
-                    "A": A,
-                    "I": I,
-                    "label": label,
-                    "missing_index": missing_index,
-                    "miss_type": miss_type,
-                }
+        missing_index = torch.tensor(
+            [int(i) for i in INDEX_LOOKUP[miss_type].split(",")]
+        ).long()
 
+        result = {
+            "label": label,
+            "missing_index": missing_index,
+            "miss_type": miss_type,
+        }
 
-# if __name__ == "__main__":
-#     dataset = AVMNISTDataSet("./AVMNIST/dataset/test.csv", modality=Modality.MULTIMODAL)
-#     audio, image, label = dataset[0]
-#     print(image.shape)
+        if self.target_modality in [Modality.AUDIO, Modality.MULTIMODAL]:
+            result[Modality.AUDIO] = A
+        if self.target_modality in [Modality.IMAGE, Modality.MULTIMODAL]:
+            result[Modality.IMAGE] = I
+
+        return result

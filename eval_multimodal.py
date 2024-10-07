@@ -1,9 +1,6 @@
 import argparse
 import json
 import os
-from subprocess import Popen
-import time
-from collections import defaultdict
 
 import numpy as np
 import torch
@@ -13,9 +10,11 @@ from tqdm import tqdm
 
 from config import StandardConfig, resolve_model_name
 from data import build_dataloader
-from missing_index import missing_pattern
-from models import kaiming_init, check_protocol_compliance, MultimodalModelProtocol
-from utils import clean_checkpoints, print_all_metrics_tables
+from models import MultimodalModelProtocol, check_protocol_compliance, kaiming_init
+from utils import (
+    clean_checkpoints,
+    display_validation_metrics,
+)
 from utils.logger import get_logger
 from utils.metric_recorder import MetricRecorder
 
@@ -104,11 +103,9 @@ if __name__ == "__main__":
     epoch_metrics = epoch_metric_recorder.get_average_metrics()
 
     console.rule("Test Metrics")
-    print_all_metrics_tables(
+    display_validation_metrics(
         metrics=epoch_metrics,
         console=console,
-        max_cols_per_row=16,
-        max_width=15,
     )
 
     file_name = os.path.join(result_dir, "test_metrics.json")

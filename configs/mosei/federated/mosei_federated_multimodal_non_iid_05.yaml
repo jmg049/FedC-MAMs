@@ -8,18 +8,18 @@ data:
     train:
       dataset: "mosei"
       data_fp: "DATA/MOSEI/aligned_50.pkl"
-      target_modality: "multimodal"
+      target_modality: !Modality "multimodal"
       split: "train"
     validation:
       dataset: "mosei"
       data_fp: "DATA/MOSEI/aligned_50.pkl"
-      target_modality: "multimodal"
+      target_modality: !Modality "multimodal"
       split: "valid"
       shuffle: True
     test:
       dataset: "mosei"
       data_fp: "DATA/MOSEI/aligned_50.pkl"
-      target_modality: "multimodal"
+      target_modality: !Modality "multimodal"
       split: "test"
       shuffle: True
     global_fraction: 0.1
@@ -40,11 +40,11 @@ federated:
     criterion: "cross_entropy"
     criterion_kwargs: {}
     epochs: 2
-    logging_config: 
+    logging: 
       save_metric: "NonZeroF1_AVL"
       log_path: "experiments/mosei_federated/logs/{experiment_name}/{run_id}/global/"
       model_output_path: "experiments/mosei_federated/models/{experiment_name}/{run_id}/global/{round}/mosei_federated_model_{save_metric}.pth"
-      metrics_paths: "experiments/mosei_federated/metrics/{experiment_name}/{run_id}/global/{round}"
+      metrics_path: "experiments/mosei_federated/metrics/{experiment_name}/{run_id}/global/{round}"
     early_stopping: False
     early_stopping_patience: 10
     early_stopping_metric: "loss"
@@ -75,7 +75,7 @@ federated:
       save_metric: "NonZeroF1_AVL"
       log_path: "experiments/mosei_federated/logs/{experiment_name}/{run_id}/client_{client_id}/"
       model_output_path: "experiments/mosei_federated/models/{experiment_name}/{run_id}/client_{client_id}/mosei_federated_model_{save_metric}.pth"
-      metrics_paths: "experiments/mosei_federated/metrics/{experiment_name}/{run_id}/client_{client_id}/"
+      metrics_path: "experiments/mosei_federated/metrics/{experiment_name}/{run_id}/client_{client_id}/"
     local_batch_size: 128
     early_stopping: False
     early_stopping_patience: 10

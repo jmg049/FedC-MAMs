@@ -4,6 +4,7 @@ import logging
 import os
 from pprint import pformat
 
+from numpy import ndarray
 import torch
 from modalities import add_modality
 from rich.console import Console
@@ -17,7 +18,7 @@ from data import (
 from federated.cmam_client import FederatedCMAMClient
 from federated.cmam_server import FederatedCongruentCMAMServer
 from models import MultimodalModelProtocol, check_protocol_compliance
-from utils import SafeDict, print_all_metrics_tables
+from utils import SafeDict, display_training_metrics, display_validation_metrics
 import utils
 from utils.metric_recorder import MetricRecorder
 
@@ -48,7 +49,9 @@ def main(config: FederatedCMAMConfig):
     logger.debug(f"Global Model: {global_model}")
 
     global_model_pretrained_path = (
-        config.server_config.global_model_config.pretrained_path
+        config.server_config.global_model_config.pretrained_path.format_map(
+            SafeDict(run_id=config.experiment.run_id)
+        )
     )
 
     if global_model_pretrained_path is None:
@@ -104,7 +107,9 @@ def main(config: FederatedCMAMConfig):
         test_dataset,
         test_iid,
     ) = create_federated_datasets(
-        num_clients=num_clients, data_config=config.data_config
+        num_clients=num_clients,
+        data_config=config.data_config,
+        indices_load_dir=os.path.dirname(config.logging.iid_metrics_path),
     )
 
     console.print("Federated Datasets created successfully")
@@ -119,12 +124,9 @@ def main(config: FederatedCMAMConfig):
     for split, metrics in iid_metrics.items():
         if metrics is not None:
             console.print(f"[bold]{split}[/bold]")
-            print_all_metrics_tables(
+            display_training_metrics(
                 metrics,
-                max_cols_per_row=10,
-                max_width=20,
                 console=console,
-                generic_table=True,
             )
     logger.debug(f"IID Metrics: {iid_metrics}")
     logger.debug(f"Saving iid metrics to {config.logging.iid_metrics_path}")
@@ -153,6 +155,10 @@ def main(config: FederatedCMAMConfig):
     console.print(f"No. of Global Train Batches: {len(global_train_loader)}")
     console.print(f"No. of Global Validation Batches: {len(global_val_loader)}")
     console.print(f"No. of Global Test Batches: {len(global_test_loader)}")
+
+    logger.debug(f"No. of Global Train Batches: {len(global_train_loader)}")
+    logger.debug(f"No. of Global Validation Batches: {len(global_val_loader)}")
+    logger.debug(f"No. of Global Test Batches: {len(global_test_loader)}")
 
     # Initialize server
     server = FederatedCongruentCMAMServer(
@@ -189,11 +195,11 @@ def main(config: FederatedCMAMConfig):
         logger.debug(f"Client {client_id} metrics path: {metrics_path}")
 
         # Initialize client model
-        client_model = global_model_cls(
-            **config.client_config.model_config.kwargs,
-            metric_recorder=metric_recorder.clone(),
-        )
-        client_model.to(device)
+        # client_model = global_model_cls(
+        #     **config.client_config.model_config.kwargs,
+        #     metric_recorder=metric_recorder.clone(),
+        # )
+        # client_model.to(device)
 
         client_cmam = global_cmam_cls(
             input_encoder_info=config.client_config.cmam_config.input_encoder_info,
@@ -210,7 +216,7 @@ def main(config: FederatedCMAMConfig):
         client_test_loader = federated_dataloaders["test"]["clients"][client_id]
         client = FederatedCMAMClient(
             client_id=client_id,
-            model=client_model,
+            model=global_model,
             cmam=client_cmam,
             optimizer=optimizer,
             criterion=criterion,
@@ -225,6 +231,8 @@ def main(config: FederatedCMAMConfig):
             logging_output_dir=config.client_config.logging.log_path,
             metrics_output_dir=config.client_config.logging.metrics_path,
         )
+
+        logger.info(f"Client {client_id} initialized successfully")
         clients.append(client)
 
     # Run federated learning
@@ -239,7 +247,7 @@ def main(config: FederatedCMAMConfig):
 
     # Print final results
     console.rule("Final Results")
-    print_all_metrics_tables(results["final_test_results"], console=console)
+    display_validation_metrics(results["final_test_results"], console=console)
 
     console.print(f"Best Round: {results['best_round']}")
     console.print(
@@ -252,6 +260,11 @@ def main(config: FederatedCMAMConfig):
         config.server_config.logging.metrics_path.format_map(SafeDict(round="")),
         "best_test_metrics.json",
     )
+
+    for k, v in results["final_test_results"].items():
+        if isinstance(v, ndarray):
+            results["final_test_results"][k] = v.tolist()
+
     with open(final_metrics_path, "w") as f:
         json_str = json.dumps(results["final_test_results"], indent=4)
         f.write(json_str)

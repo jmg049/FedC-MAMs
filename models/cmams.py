@@ -95,8 +95,6 @@ class BasicCMAM(Module):
         modalities: Union[Dict[Modality, torch.Tensor], torch.Tensor],
         return_z: bool = False,
     ) -> torch.Tensor:
-        
-        
         if isinstance(modalities, dict):
             embeddings = [
                 self.encoders[modality](data) for modality, data in modalities.items()
@@ -118,18 +116,14 @@ class BasicCMAM(Module):
         device: torch.device,
         trained_model: MultimodalModelProtocol,
     ):
-        
-        
         self.train()
         self.to(device)
-        
 
         target_modality = batch[self.target_modality].float().to(device)
         input_modalities = {
             modality: batch[Modality.from_str(modality)].float().to(device)
             for modality in self.encoders
         }
-        
 
         mi_input_modalities = [v.clone() for k, v in input_modalities.items()]
 
@@ -141,14 +135,10 @@ class BasicCMAM(Module):
             trained_model.eval()
             trained_encoder = trained_model.get_encoder(self.target_modality)
             target_embd = trained_encoder(target_modality.to(device))
-        
 
         # Ensure trained_model's parameters do not require gradients
         for param in trained_model.parameters():
             param.requires_grad = False
-
-        
-        
 
         # Zero the gradients
         optimizer.zero_grad()
@@ -171,9 +161,6 @@ class BasicCMAM(Module):
         # Compute logits without torch.no_grad()
         logits = trained_model(**m_kwargs, device=device)
         predictions = logits.argmax(dim=1)
-
-        
-
 
         if self.binarize:
             (
@@ -231,7 +218,6 @@ class BasicCMAM(Module):
         optimizer.step()
 
         other_losses = {k: v.item() for k, v in loss_dict.items() if k != "total_loss"}
-
 
         return {
             "loss": total_loss.item(),
@@ -358,7 +344,7 @@ class BasicCMAM(Module):
                         targets=mask_labels,
                         skip_metrics=["ConfusionMatrix"],
                     )
-                    for k, metrics in mask_metrics.items():
+                    for k, v in mask_metrics.items():
                         metrics[f"{k}_{m_type.replace('z', '').upper()}"] = v
             self.train()
 

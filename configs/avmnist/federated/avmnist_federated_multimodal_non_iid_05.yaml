@@ -8,26 +8,36 @@ data:
   train:
     dataset: "avmnist"
     data_fp: "DATA/avmnist/train_subset.csv"
-    target_modality: "multimodal"
+    target_modality: !Modality "multimodal"
     split: "train"
     shuffle: True
     drop_last: True
     pin_memory: True
+    selected_missing_types:
+      - "ai"
   validation:
     dataset: "avmnist"
     data_fp: "DATA/avmnist/validation_subset.csv"
-    target_modality: "multimodal"
+    target_modality: !Modality "multimodal"
     split: "valid"
     drop_last: True
     pin_memory: True
+    selected_missing_types:
+      - "ai"
+      - "az"
+      - "zi"
   test:
     dataset: "avmnist"
     data_fp: "DATA/avmnist/test_subset.csv"
-    target_modality: "multimodal"
+    target_modality: !Modality "multimodal"
     split: "test"
     drop_last: True
     pin_memory: True
-  global_fraction: 0.02
+    selected_missing_types:
+      - "ai"
+      - "az"
+      - "zi"
+  global_fraction: 0.05
   distribution_type: "non_iid"
   sampling_strategy: "non_iid"
   alpha: 0.5
@@ -36,7 +46,7 @@ data:
 federated: 
   server_config: !FederatedServerConfig
     num_clients: 50 # for avmnist subset this is 588 samples per client with the global model have 360 samples
-    rounds: 25  # Suggested number of federated rounds
+    rounds: 10  # Suggested number of federated rounds
     aggregation_strategy: "fedavg"
     optimizer: "Adam"
     optimizer_kwargs:

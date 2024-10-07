@@ -22,6 +22,7 @@ def print_gpu_memory():
         print(f"Allocated: {torch.cuda.memory_allocated()/1e9:.2f}GB")
         print(f"Cached:    {torch.cuda.memory_reserved()/1e9:.2f}GB")
 
+
 def de_device(x: Tensor | ndarray) -> ndarray:
     if isinstance(x, Tensor):
         return x.detach().cpu().numpy()
@@ -108,6 +109,41 @@ def call_latex_to_image(
         raise RuntimeError(f"An unexpected error occurred: {e}") from e
 
 
+def confusion_matrix_to_rich_table(
+    confusion_matrix: np.ndarray, class_labels: list = None
+):
+    # Validate inputs
+    if class_labels and len(class_labels) != confusion_matrix.shape[0]:
+        raise ValueError(
+            "The number of class labels must match the dimensions of the confusion matrix."
+        )
+
+    # Initialize Rich Console
+    console = Console()
+
+    # Define Table
+    table = Table(title="Confusion Matrix", box=box.SIMPLE, row_styles=["dim", ""])
+
+    # Add Header Row
+    table.add_column("Predicted/Actual", justify="center")
+    if class_labels is None:
+        class_labels = [f"Class {i}" for i in range(confusion_matrix.shape[0])]
+
+    for label in class_labels:
+        table.add_column(label, justify="center")
+
+    # Add Rows of Confusion Matrix
+    for i, label in enumerate(class_labels):
+        row = [label] + [
+            str(confusion_matrix[i][j]) for j in range(confusion_matrix.shape[1])
+        ]
+        table.add_row(*row)
+
+    # Print Table
+    # console.print(table)
+    return table
+
+
 def display_training_metrics(metrics, console=None):
     if console is None:
         console = Console()
@@ -133,8 +169,7 @@ def display_training_metrics(metrics, console=None):
         table.add_column("Value", justify="right", style="bold yellow")
 
     metric_pairs = []
-    panels = []
-
+    confusion_table = None
     # Prepare metric-value pairs
     for key in metric_keys:
         value = metrics[key]
@@ -142,16 +177,7 @@ def display_training_metrics(metrics, console=None):
         if isinstance(value, (np.generic, np.ndarray)):
             if isinstance(value, np.ndarray):
                 # Display confusion matrix in a better formatted way
-                matrix_str = "\n".join(
-                    [
-                        "\t".join([f"{int(round(item))}" for item in row])
-                        for row in value
-                    ]
-                )
-                value_panel = Panel(
-                    matrix_str, title=key, expand=False, border_style="bold green"
-                )
-                panels.append(value_panel)
+                confusion_table = confusion_matrix_to_rich_table(value)
                 continue
             else:
                 value = value.item()  # Convert np.generic to Python scalar
@@ -174,8 +200,8 @@ def display_training_metrics(metrics, console=None):
     console.print(table)
 
     # Print the confusion matrices as panels
-    if panels:
-        console.print(Columns(panels))
+    if confusion_table:
+        console.print(confusion_table)
 
 
 def display_validation_metrics(metrics, console=None):
@@ -198,6 +224,7 @@ def display_validation_metrics(metrics, console=None):
 
     # Prepare tables for each condition
     tables = []
+    confusion_tables = []
     for condition in sorted_conditions:
         condition_metrics = grouped_metrics[condition]
         table = Table(
@@ -214,19 +241,8 @@ def display_validation_metrics(metrics, console=None):
             if isinstance(value, (np.generic, np.ndarray)):
                 if isinstance(value, np.ndarray):
                     # Display confusion matrix in a better formatted way
-                    matrix_str = "\n".join(
-                        [
-                            "\t".join([f"{int(round(item))}" for item in row])
-                            for row in value
-                        ]
-                    )
-                    value_panel = Panel(
-                        matrix_str,
-                        title=f"{key}_{condition}",
-                        expand=False,
-                        border_style="bold green",
-                    )
-                    tables.append(value_panel)
+                    confusion_table = confusion_matrix_to_rich_table(value)
+                    tables.append(confusion_table)
                     continue
                 else:
                     value = value.item()  # Convert np.generic to Python scalar
