@@ -221,17 +221,23 @@ class FederatedMultimodalClient:
 
             ## update best model
             if self.fed_config.target_metric == "loss":
-                if val_metrics["loss"] < self.best_model_score:
-                    self.best_model_score = val_metrics["loss"]
-                    self.best_model_epoch = epoch
-                    self.best_model_round = self.current_round
-                    self.best_model_path = os.path.join(
-                        self.model_output_dir,
-                        str(self.current_round),
-                        "best.pth",
-                    )
-                    os.makedirs(os.path.dirname(self.best_model_path), exist_ok=True)
-                    torch.save(self.model.state_dict(), self.best_model_path)
+                try:
+                    if val_metrics["loss"] < self.best_model_score:
+                        self.best_model_score = val_metrics["loss"]
+                        self.best_model_epoch = epoch
+                        self.best_model_round = self.current_round
+                        self.best_model_path = os.path.join(
+                            self.model_output_dir,
+                            str(self.current_round),
+                            "best.pth",
+                        )
+                        os.makedirs(
+                            os.path.dirname(self.best_model_path), exist_ok=True
+                        )
+                        torch.save(self.model.state_dict(), self.best_model_path)
+                except KeyError as e:
+                    self.print_fn("Available metrics: ", val_metrics.keys())
+                    raise e
             else:
                 if val_metrics[self.fed_config.target_metric] > self.best_model_score:
                     self.best_model_score = val_metrics[self.fed_config.target_metric]

@@ -150,7 +150,7 @@ class FederatedDataSplitter:
         for client_id in range(self.num_clients):
             self.client_indices[client_id] = split_indices[client_id]
 
-    def _non_iid_split(self):
+    def _non_iid_split(self, min_samples_per_client=10):
         labels = [self.get_label_fn(self.dataset[i]) for i in self.client_data_indices]
         labels = np.array(labels)
         unique_labels = np.unique(labels)
@@ -161,22 +161,48 @@ class FederatedDataSplitter:
         }
         client_class_indices = {client_id: [] for client_id in range(self.num_clients)}
 
+        # First, distribute the data across clients without considering classes to ensure each client gets at least the minimum number of samples
+        all_indices = np.concatenate(list(class_indices.values()))
+        np.random.shuffle(all_indices)
+
+        # Assign minimum samples to each client
+        start = 0
+        for client_id in range(self.num_clients):
+            end = start + min_samples_per_client
+            if end > len(all_indices):
+                raise ValueError(
+                    f"Not enough data to allocate {min_samples_per_client} samples to each client."
+                )
+            client_class_indices[client_id].extend(all_indices[start:end])
+            start = end
+
+        # Update the remaining indices after minimum sample allocation
+        remaining_indices = all_indices[start:]
+
+        # Next, distribute the remaining data in a non-iid manner using Dirichlet distribution based on classes
         for label in unique_labels:
             indices = class_indices[label]
-            proportions = np.random.dirichlet(np.repeat(self.alpha, self.num_clients))
-            proportions = (proportions * len(indices)).astype(int)
+            indices = [idx for idx in indices if idx in remaining_indices]
+            np.random.shuffle(indices)
 
-            diff = len(indices) - np.sum(proportions)
-            for i in range(abs(diff)):
-                idx = i % self.num_clients
-                proportions[idx] += np.sign(diff)
+            if len(indices) > 0:
+                proportions = np.random.dirichlet(
+                    np.repeat(self.alpha, self.num_clients)
+                )
+                proportions = (proportions * len(indices)).astype(int)
 
-            start = 0
-            for client_id, count in enumerate(proportions):
-                end = start + count
-                client_class_indices[client_id].extend(indices[start:end])
-                start = end
+                diff = len(indices) - np.sum(proportions)
+                for i in range(abs(diff)):
+                    idx = i % self.num_clients
+                    proportions[idx] += np.sign(diff)
 
+                start = 0
+                for client_id, count in enumerate(proportions):
+                    end = start + count
+                    client_class_indices[client_id].extend(indices[start:end])
+                    start = end
+
+        # Assign client indices
         for client_id in range(self.num_clients):
             self.client_indices[client_id] = np.array(client_class_indices[client_id])
 

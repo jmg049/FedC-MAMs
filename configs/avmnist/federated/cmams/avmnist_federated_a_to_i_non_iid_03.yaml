@@ -69,7 +69,7 @@ federated:
     
     global_model_config: !ModelConfig &model
       name: "AVMNIST"
-      pretrained_path: "experiments/avmnist_federated/models/AVMNIST_Federated_Learning___Classification/{run_id}/global/avmnist_federated_model_loss_best.pth"
+      pretrained_path: "experiments/avmnist_federated/models/AVMNIST_Federated_Learning___Classification_non_iid_0_3/{run_id}/global/avmnist_federated_model_loss_best.pth"
       audio_encoder: !MNISTAudio
         conv_block_one_args: !ConvBlock
           conv_one_in: 1
@@ -143,7 +143,7 @@ federated:
 
 logging:
   log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/"
-  iid_metrics_path: "experiments/avmnist_federated/metrics/AVMNIST_Federated_Learning___Classification/{run_id}/iid_metrics.json"
+  iid_metrics_path: "experiments/avmnist_federated/metrics/AVMNIST_Federated_Learning___Classification_non_iid_0_3/{run_id}/iid_metrics.json"
 
 metrics:
   metrics:

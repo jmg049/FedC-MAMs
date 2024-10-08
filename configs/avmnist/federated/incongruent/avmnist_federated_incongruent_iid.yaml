@@ -1,0 +1,207 @@
+experiment: !ExperimentConfig
+  name: "AVMNIST Federated Incongruent IID"
+  debug: True
+  device: "cuda"
+  do_test: True
+
+
+data:
+  train:
+
+  validation:
+
+  test:
+  global_fraction: 0.05
+  distribution_type: "iid"
+  sampling_strategy: "stratified"
+  alpha: 1.0 ## does not get used in iid
+  get_label_fn: "avmnist"
+
+federated:
+  server_config: !FederatedIncongruentServerConfig
+    num_clients: 50 
+    rounds: 15
+    aggregation_strategy: "fedavg"
+    cls_optimizer: "Adam"
+    cls_optimizer_kwargs: &cls_adam_kwargs
+      lr: 0.001
+      weight_decay: 0.00001
+    cls_criterion: "cross_entropy"
+    cls_criterion_kwargs: {}
+    cmam_optimizers:
+      A_I: "Adam"
+      I_A: "Adam"
+    cmam_optimizer_kwargs:
+      A_I: 
+        lr: 0.001
+        weight_decay: 0.00001
+      I_A:
+        lr: 0.001
+        weight_decay: 0.00001
+    cmam_criterion: "cmam"
+    cmam_criterion_kwargs: &CMAMCriterion
+      cosine_weight: 1.0
+      mse_weight: 1.0
+      mae_weight: 1.0
+      cls_weight: 0.05
+      rec_weight: 1.0
+      mmd_weight: 0.1
+    mm_epochs: 1
+    model_config: !ModelConfig &ModelConfig
+      name: "AVMNIST"
+      audio_encoder: !MNISTAudio
+        conv_block_one_args: !ConvBlock
+          conv_one_in: 1
+          conv_one_out: 32
+        conv_block_two_args: !ConvBlock
+          conv_one_in: 32
+          conv_one_out: 32
+        conv_batch_norm: True
+        hidden_dim: 64
+      image_encoder: !MNISTImage
+        conv_block_one_one_args: !ConvBlock
+          conv_one_in: 1
+          conv_one_out: 32
+        conv_block_one_two_args: !ConvBlock
+          conv_one_in: 32
+          conv_one_out: 64
+        conv_block_two_one_args: !ConvBlock
+          conv_one_in: 64
+          conv_one_out: 64
+        conv_block_two_two_args: !ConvBlock
+          conv_one_in: 64
+          conv_one_out: 64
+        hidden_dim: 128
+        conv_batch_norm: True
+      hidden_dim: 128
+      dropout: 0.5
+      fusion_fn: "concat"
+
+    cmam_epochs: 10
+    cmam_configs:
+      A_I: !CMAMModelConfig
+        name: "BasicCMAM"
+        input_encoder_info:
+          Audio: !MNISTAudio
+            conv_block_one_args: !ConvBlock
+              conv_one_in: 1
+              conv_one_out: 32
+            conv_block_two_args: !ConvBlock
+              conv_one_in: 32
+              conv_one_out: 32
+            conv_batch_norm: True
+            hidden_dim: 64
+        target_modality: !Modality "Image"
+        assoc_net_input_size: 64
+        assoc_net_hidden_size: 256
+        assoc_net_output_size: 128
+        assoc_dropout: 0.4
+        assoc_use_bn: True 
+        grad_clip: 0.5
+        target_missing_type: "az"
+      I_A: !CMAMModelConfig
+        name: "BasicCMAM"
+        input_encoder_info:
+          image: !MNISTImage
+            conv_block_one_one_args: !ConvBlock
+              conv_one_in: 1
+              conv_one_out: 32
+            conv_block_one_two_args: !ConvBlock
+              conv_one_in: 32
+              conv_one_out: 64
+            conv_block_two_one_args: !ConvBlock
+              conv_one_in: 64
+              conv_one_out: 64
+            conv_block_two_two_args: !ConvBlock
+              conv_one_in: 64
+              conv_one_out: 64
+            hidden_dim: 128
+            conv_batch_norm: True
+        target_modality: !Modality "audio"
+        assoc_net_input_size: 64
+        assoc_net_hidden_size: 256
+        assoc_net_output_size: 128
+        assoc_dropout: 0.4
+        assoc_use_bn: True 
+        grad_clip: 0.5
+        target_missing_type: "zi"
+    cmam_logging: 
+      A_I: !LoggingConfig
+        save_metric: "loss"
+        log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/global"
+        model_output_path: "experiments/avmnist_federated/models/{experiment_name}/{run_id}/global/{round}/cmam_A_to_I_{save_metric}.pth" 
+        metrics_path: "experiments/avmnist_federated/metrics/{experiment_name}/{run_id}/global/{round}/cmam_A_to_I"
+
+      I_A: !LoggingConfig
+        save_metric: "loss"
+        log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/global"
+        model_output_path: "experiments/avmnist_federated/models/{experiment_name}/{run_id}/global/{round}/cmam_I_to_A_{save_metric}.pth" 
+        metrics_path: "experiments/avmnist_federated/metrics/{experiment_name}/{run_id}/global/{round}/cmam_I_to_A"
+  client_config: !FederatedIncongruentClientConfig
+    local_epochs: 5
+    local_batch_size: 128
+    model_config: *ModelConfig
+    cls_optimizer: "Adam"
+    cls_optimizer_kwargs: *cls_adam_kwargs
+    cls_criterion: "cross_entropy"
+    cls_criterion_kwargs: {}
+    logging: !LoggingConfig
+      save_metric: "loss"
+      log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/client_{client_id}/"
+      model_output_path: "experiments/avmnist_federated/models/{experiment_name}/{run_id}/client_{client_id}/"
+      metrics_path: "experiments/avmnist_federated/metrics/{experiment_name}/{run_id}/client_{client_id}/"
+
+logging:
+  log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/"
+  iid_metrics_path: "experiments/avmnist_federated/metrics/{experiment_name}/{run_id}/iid_metrics.json"
+
+metrics:
+  metrics:
+    Accuracy:
+      function: "sklearn.metrics.accuracy_score"
+    F1_Micro:
+      function: "sklearn.metrics.f1_score"
+      kwargs:
+        average: "micro"
+    F1_Macro:
+      function: "sklearn.metrics.f1_score"
+      kwargs:
+        average: "macro"
+    F1_Weighted:
+      function: "sklearn.metrics.f1_score"
+      kwargs:
+        average: "weighted"
+    Precision_Macro:
+      function: "sklearn.metrics.precision_score"
+      kwargs:
+        average: "macro"
+        zero_division: 0
+    Recall_Macro:
+      function: "sklearn.metrics.recall_score"
+      kwargs:
+        average: "macro"
+        zero_division: 0
+    Precision_Weighted:
+      function: "sklearn.metrics.precision_score"
+      kwargs:
+        average: "weighted"
+        zero_division: 0
+    Recall_Weighted:
+      function: "sklearn.metrics.recall_score"
+      kwargs:
+        average: "weighted"
+        zero_division: 0
+    Precision_Micro:
+      function: "sklearn.metrics.precision_score"
+      kwargs:
+        average: "micro"
+        zero_division: 0
+    Recall_Micro:
+      function: "sklearn.metrics.recall_score"
+      kwargs:
+        average: "micro"
+        zero_division: 0
+    ConfusionMatrix:
+      function: "sklearn.metrics.confusion_matrix"
+      kwargs:
+        labels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
