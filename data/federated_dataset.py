@@ -1,6 +1,7 @@
 from collections import Counter
 import os
 import numpy as np
+import torch
 from torch.utils.data import Dataset
 from typing import Any, Callable, Dict, Optional, List, Literal
 from scipy.stats import entropy
@@ -381,3 +382,67 @@ class FederatedDatasetWrapper(Dataset):
         ):
             return self.base_dataset.collate_fn(batch)
         return None  # Default PyTorch collate_fn will be used
+
+
+class FederatedIncongruentDatasetWrapper(Dataset):
+    def __init__(
+        self,
+        dataset: Dataset,
+        indices: List[int],
+        get_label_fn: Optional[Callable] = None,
+        selected_missing_types: Optional[List[str]] = None,
+    ):
+        """
+        Wrapper class for federated datasets.
+
+        Args:
+            dataset (Dataset): Base dataset to be wrapped.
+            indices (List[int]): Indices to subset the dataset.
+            get_label_fn (Optional[Callable]): Function to extract labels from data items.
+            selected_missing_types (Optional[List[str]]): List of missing types for this client.
+        """
+        self.base_dataset = dataset
+        self.indices = indices
+        self.get_label_fn = get_label_fn or (lambda x: x[1])
+        self.selected_missing_types = selected_missing_types or []
+
+    def __len__(self) -> int:
+        return len(self.indices)
+
+    def set_selected_missing_types(self, selected_missing_types: List[str]):
+        self.selected_missing_types = selected_missing_types
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        base_idx = self.indices[idx]
+        item = self.base_dataset[base_idx]
+
+        # # Add missing modality information to the item
+        # if "miss_type" in item:
+        #     raise ValueError("Item already has 'miss_type' key.")
+        # if "missing_index" in item:
+        #     raise ValueError("Item already has 'missing_index' key.")
+
+        if self.selected_missing_types:
+            # Randomly select a missing type from the assigned missing types
+            miss_type = str(self.selected_missing_types)
+
+            item["miss_type"] = miss_type
+
+            # Generate missing index tensor based on INDEX_LOOKUP from dataset
+            missing_index = torch.tensor(
+                [
+                    int(value)
+                    for value in self.base_dataset.INDEX_LOOKUP[miss_type].split(",")
+                ]
+            )
+            item["missing_index"] = missing_index
+        else:
+            # Default to no missing modalities if none specified
+            item["miss_type"] = "none"
+            item["missing_index"] = torch.ones(len(self.base_dataset.INDEX_LOOKUP))
+
+        # Optionally apply label extraction function
+        if self.get_label_fn:
+            item["label"] = self.get_label_fn(item)
+
+        return item

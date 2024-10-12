@@ -20,6 +20,7 @@ def create_federated_datasets(
     data_config,
     indices_save_dir: str = None,
     indices_load_dir: str = None,
+    federated_dataset_wrapper_cls=FederatedDatasetWrapper,
 ):
     """
     Create federated datasets for train, validation, and test splits.
@@ -117,7 +118,7 @@ def create_federated_datasets(
             splitter.save_indices(_indices_save_dir)
 
         # Create global and client datasets
-        global_dataset = FederatedDatasetWrapper(
+        global_dataset = federated_dataset_wrapper_cls(
             dataset=base_dataset,
             indices=splitter.get_global_indices(),
             get_label_fn=get_label_fn,
@@ -125,7 +126,7 @@ def create_federated_datasets(
 
         client_datasets = []
         for client_id in range(num_clients):
-            client_dataset = FederatedDatasetWrapper(
+            client_dataset = federated_dataset_wrapper_cls(
                 dataset=base_dataset,
                 indices=splitter.get_client_indices(client_id),
                 get_label_fn=get_label_fn,

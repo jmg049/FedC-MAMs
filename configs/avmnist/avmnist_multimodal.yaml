@@ -2,8 +2,8 @@ experiment:
   name: "AVMNIST (Classification): Baseline Training"
   debug: False
 
-data:
-  train:
+data: !DataConfig
+  train: !DatasetConfig
     dataset: "avmnist"
     data_fp: "DATA/avmnist/train_subset.csv"
     target_modality: !Modality "multimodal"
@@ -28,7 +28,7 @@ data:
     drop_last: True
     pin_memory: True
 
-model:
+model: !ModelConfig
   name: "AVMNIST"
   audio_encoder: !MNISTAudio
     conv_block_one_args: !ConvBlock
@@ -58,7 +58,7 @@ model:
   dropout: 0.5
   fusion_fn: "concat"
 
-training:
+training: !TrainingConfig
   mode: "baseline"
   epochs:  25
   batch_size: 128
@@ -78,7 +78,7 @@ training:
   early_stopping_min_delta: 0.001
   do_validation_visualization: False
 
-logging:
+logging: !LoggingConfig
   save_metric: "loss"
   log_path: "experiments/avmnist/logs/{experiment_name}/{run_id}/"
   model_output_path: "experiments/avmnist/models/{experiment_name}/{run_id}/avmnist_model_{save_metric}.pth" 

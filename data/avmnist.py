@@ -8,21 +8,36 @@ from modalities import Modality
 from PIL import Image
 from torchvision.transforms.v2 import ToDtype, PILToTensor
 
-MASK_LOOKUP = {
-    0: "ai",
-    1: "az",
-    2: "zi",
-}
-
-INDEX_LOOKUP = {
-    "ai": "1,1",
-    "az": "1,0",
-    "zi": "0,1",
-}
-
 
 class AVMNISTDataSet(Dataset):
     NUM_CLASSES = 10
+    MASK_LOOKUP = {
+        0: "ai",
+        1: "az",
+        2: "zi",
+    }
+
+    INDEX_LOOKUP = {
+        "ai": "1,1",
+        "az": "1,0",
+        "zi": "0,1",
+    }
+
+    MODALITY_LOOKUP = {
+        "ai": Modality.MULTIMODAL,
+        "az": Modality.AUDIO,
+        "zi": Modality.IMAGE,
+    }
+
+    FULL_CONDITION = "ai"
+
+    @classmethod
+    def get_modality(cls, miss_type: str) -> Modality:
+        return cls.MODALITY_LOOKUP[miss_type]
+
+    @classmethod
+    def get_missing_types(cls) -> list[str]:
+        return list(cls.INDEX_LOOKUP.keys())
 
     def __init__(
         self,
@@ -88,7 +103,7 @@ class AVMNISTDataSet(Dataset):
         I = self.scale(I)
 
         missing_index = torch.tensor(
-            [int(i) for i in INDEX_LOOKUP[miss_type].split(",")]
+            [int(i) for i in self.INDEX_LOOKUP[miss_type].split(",")]
         ).long()
 
         result = {

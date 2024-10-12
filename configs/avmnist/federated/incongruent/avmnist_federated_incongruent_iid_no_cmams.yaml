@@ -1,5 +1,5 @@
 experiment: !ExperimentConfig
-  name: "AVMNIST Federated Incongruent IID"
+  name: "AVMNIST Federated Incongruent IID - No C-MAMs"
   debug: True
   device: "cuda"
   do_test: True
@@ -53,24 +53,8 @@ federated:
       weight_decay: 0.00001
     cls_criterion: "cross_entropy"
     cls_criterion_kwargs: {}
-    cmam_optimizers:
-      audio: "Adam"
-      image: "Adam"
-    cmam_optimizer_kwargs:
-      audio: 
-        lr: 0.001
-        weight_decay: 0.00001
-      image:
-        lr: 0.001
-        weight_decay: 0.00001
-    cmam_criterion: "cmam"
-    cmam_criterion_kwargs: &CMAMCriterion
-      cosine_weight: 1.0
-      mse_weight: 1.0
-      mae_weight: 1.0
-      cls_weight: 0.05
-      rec_weight: 1.0
-      mmd_weight: 0.1
+   
+   
     mm_epochs: 1
     model_config: !ModelConfig &ModelConfig
       name: "AVMNIST"
@@ -106,66 +90,7 @@ federated:
       log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/global"
       model_output_path: "experiments/avmnist_federated/models/{experiment_name}/{run_id}/global/{round}/cls_{save_metric}.pth" 
       metrics_path: "experiments/avmnist_federated/metrics/{experiment_name}/{run_id}/global/{round}/cls"
-    cmam_epochs: 10
-    cmam_configs:
-      audio: !CMAMModelConfig
-        name: "BasicCMAM"
-        input_encoder_info:
-          Audio: !MNISTAudio
-            conv_block_one_args: !ConvBlock
-              conv_one_in: 1
-              conv_one_out: 32
-            conv_block_two_args: !ConvBlock
-              conv_one_in: 32
-              conv_one_out: 32
-            conv_batch_norm: True
-            hidden_dim: 64
-        target_modality: !Modality "Image"
-        assoc_net_input_size: 64
-        assoc_net_hidden_size: 256
-        assoc_net_output_size: 128
-        assoc_dropout: 0.4
-        assoc_use_bn: True 
-        grad_clip: 0.5
-        target_missing_type: "az"
-      image: !CMAMModelConfig
-        name: "BasicCMAM"
-        input_encoder_info:
-          image: !MNISTImage
-            conv_block_one_one_args: !ConvBlock
-              conv_one_in: 1
-              conv_one_out: 32
-            conv_block_one_two_args: !ConvBlock
-              conv_one_in: 32
-              conv_one_out: 64
-            conv_block_two_one_args: !ConvBlock
-              conv_one_in: 64
-              conv_one_out: 64
-            conv_block_two_two_args: !ConvBlock
-              conv_one_in: 64
-              conv_one_out: 64
-            hidden_dim: 128
-            conv_batch_norm: True
-        target_modality: !Modality "audio"
-        assoc_net_input_size: 128
-        assoc_net_hidden_size: 256
-        assoc_net_output_size: 64
-        assoc_dropout: 0.4
-        assoc_use_bn: True 
-        grad_clip: 0.5
-        target_missing_type: "zi"
-    cmam_logging: 
-      audio: 
-        save_metric: "loss"
-        log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/global"
-        model_output_path: "experiments/avmnist_federated/models/{experiment_name}/{run_id}/global/{round}/cmam_A_to_I_{save_metric}.pth" 
-        metrics_path: "experiments/avmnist_federated/metrics/{experiment_name}/{run_id}/global/{round}/cmam_A_to_I"
 
-      image:
-        save_metric: "loss"
-        log_path: "experiments/avmnist_federated/logs/{experiment_name}/{run_id}/global"
-        model_output_path: "experiments/avmnist_federated/models/{experiment_name}/{run_id}/global/{round}/cmam_I_to_A_{save_metric}.pth" 
-        metrics_path: "experiments/avmnist_federated/metrics/{experiment_name}/{run_id}/global/{round}/cmam_I_to_A"
   client_config: !FederatedIncongruentClientConfig
     local_epochs: 5
     local_batch_size: 128

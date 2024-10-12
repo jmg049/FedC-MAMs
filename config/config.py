@@ -117,7 +117,9 @@ class DatasetConfig(BaseConfig):
     target_modality: str
     split: str
     shuffle: bool = False
+    pin_memory: bool = False
     selected_missing_types: list[str] = None
+    drop_last: bool = False
     kwargs: Dict[str, Any] = field(default_factory=dict)
 
     def __iter__(self) -> Iterator[Tuple[str, Any]]:

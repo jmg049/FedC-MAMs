@@ -7,31 +7,47 @@ import numpy as np
 from numpy import int64
 from torch.nn.utils.rnn import pad_sequence
 import pickle
-from modalities import Modality
+from modalities import Modality, add_modality
 from torch.utils.data import Dataset
 
-MASK_LOOKUP = {
-    0: "avt",
-    1: "azz",
-    2: "zvz",
-    3: "zzt",
-    4: "avz",
-    5: "azt",
-    6: "zvt",
-}
-
-INDEX_LOOKUP = {
-    "avt": "1,1,1",
-    "azz": "1,0,0",
-    "zvz": "0,1,0",
-    "zzt": "0,0,1",
-    "avz": "1,1,0",
-    "azt": "1,0,1",
-    "zvt": "0,1,1",
-}
+add_modality("VIDEO")
 
 
 class cmumoseimissdataset(Dataset):
+    MASK_LOOKUP = {
+        0: "avt",
+        1: "azz",
+        2: "zvz",
+        3: "zzt",
+        4: "avz",
+        5: "azt",
+        6: "zvt",
+    }
+
+    INDEX_LOOKUP = {
+        "avt": "1,1,1",
+        "azz": "1,0,0",
+        "zvz": "0,1,0",
+        "zzt": "0,0,1",
+        "avz": "1,1,0",
+        "azt": "1,0,1",
+        "zvt": "0,1,1",
+    }
+
+    MODALITY_LOOKUP = {
+        "avt": Modality.INVALID,
+        "azz": Modality.AUDIO,
+        "zvz": Modality.VIDEO,
+        "zzt": Modality.TEXT,
+        "avz": Modality.MULTIMODAL,
+        "azt": Modality.MULTIMODAL,
+        "zvt": Modality.MULTIMODAL,
+    }
+
+    @classmethod
+    def get_missing_types(cls) -> list[str]:
+        return list(cls.INDEX_LOOKUP.keys())
+
     @staticmethod
     def get_num_classes(is_classification: bool = True):
         return 3 if is_classification else 1
@@ -67,9 +83,9 @@ class cmumoseimissdataset(Dataset):
 
         if split != "train":  # val && tst
             if selected_missing_types is None:
-                selected_missing_types = list(INDEX_LOOKUP.keys())
+                selected_missing_types = list(self.INDEX_LOOKUP.keys())
             valid_missing_indices = [
-                INDEX_LOOKUP[miss_type] for miss_type in selected_missing_types
+                self.INDEX_LOOKUP[miss_type] for miss_type in selected_missing_types
             ]
             valid_missing_indices = [
                 [int(i) for i in m_index.split(",")]
@@ -92,7 +108,7 @@ class cmumoseimissdataset(Dataset):
                 [1, 0, 1],  # AZL
                 [0, 1, 1],  # ZVL
             ]
-            self.miss_type = list(INDEX_LOOKUP.keys())
+            self.miss_type = list(self.INDEX_LOOKUP.keys())
         if not isinstance(target_modality, Modality):
             target_modality = Modality.from_str(target_modality)
         assert target_modality in [

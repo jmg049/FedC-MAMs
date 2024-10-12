@@ -14,12 +14,13 @@ from torch.nn import (
     ReLU,
     Sequential,
 )
+from torch.optim import Optimizer
 
 from cmam_loss import CMAMLoss
 from models import MultimodalModelProtocol, resolve_encoder
 from models.utt_fusion_model import UttFusionModel
+from utils import de_device
 from utils.metric_recorder import MetricRecorder
-from utils import de_device, print_gpu_memory
 
 
 class BasicCMAM(Module):
@@ -106,6 +107,198 @@ class BasicCMAM(Module):
 
         z = self.fusion_fn(embeddings, dim=1)
         return self.assoc_net(z) if not return_z else (self.assoc_net(z), z)
+
+    def incongruent_train_step(
+        self,
+        batch: dict[torch.Tensor],
+        labels: torch.Tensor,
+        criterion: Module,
+        optimizer: Optimizer,
+        device: torch.device,
+        mm_model: MultimodalModelProtocol,
+    ) -> dict[str, Any]:
+        self.train()
+        mm_model.train()
+        self.to(device=device)
+        mm_model.to(device=device)
+
+        input_modalities = {
+            modality: batch[Modality.from_str(modality)].float().to(device)
+            for modality in self.encoders
+        }
+        labels = labels.to(device)
+
+        # Zero the gradients
+        optimizer.zero_grad()
+
+        # Forward pass through CMAM
+        rec_embd = self.forward(input_modalities)
+
+        # Prepare input for the pretrained model
+        encoder_data = {
+            str(k)[0].upper(): batch[Modality.from_str(k)].to(device=device)
+            for k in self.encoders.keys()
+        }
+        m_kwargs = {
+            **encoder_data,
+            f"{str(self.target_modality)[0]}": rec_embd.to(device=device),
+            f"is_embd_{str(self.target_modality)[0]}": True,
+        }
+        logits = mm_model(**m_kwargs, device=device)
+        predictions = logits.argmax(dim=1)
+
+        loss = criterion(logits, labels)
+
+        if self.binarize:
+            (
+                binary_preds,
+                binary_truth,
+                non_zeros_mask,
+            ) = UttFusionModel.msa_binarize(predictions.cpu().numpy(), labels)
+
+            binary_preds = de_device(binary_preds)
+            binary_truth = de_device(binary_truth)
+            non_zeros_mask = de_device(non_zeros_mask)
+
+            # Calculate metrics for all elements (including zeros)
+            binary_metrics = self.metric_recorder.calculate_metrics(
+                predictions=binary_preds, targets=binary_truth
+            )
+
+            # Calculate metrics for non-zero elements only using the non_zeros_mask
+            non_zeros_binary_preds = binary_preds[non_zeros_mask]
+            non_zeros_binary_truth = binary_truth[non_zeros_mask]
+
+            non_zero_metrics = self.metric_recorder.calculate_metrics(
+                predictions=non_zeros_binary_preds,
+                targets=non_zeros_binary_truth,
+            )
+
+            # Store the metrics in a dictionary
+            metrics = {}
+
+            for k, v in binary_metrics.items():
+                metrics[f"HasZero_{k}"] = v
+
+            for k, v in non_zero_metrics.items():
+                metrics[f"NonZero_{k}"] = v
+        else:
+            metrics = self.metric_recorder.calculate_metrics(predictions, labels)
+
+        # Optional gradient clipping
+        if self.grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
+
+        optimizer.step()
+
+        return {
+            "loss": loss.item(),
+            **metrics,
+        }
+
+    def incongruent_evaluate(
+        self,
+        batch: Dict[Modality, torch.Tensor],
+        labels: torch.Tensor,
+        criterion: Module,
+        device: torch.device,
+        mm_model: MultimodalModelProtocol,
+    ):
+        self.eval()
+        mm_model.eval()
+        self.to(device)
+        mm_model.to(device)
+        with torch.no_grad():
+            input_modalities = {
+                modality: batch[Modality.from_str(modality)].float().to(device)
+                for modality in self.encoders
+            }
+            miss_type = batch["miss_type"]
+
+            labels = labels.to(device)
+
+            rec_embd = self.forward(input_modalities)
+
+            encoder_data = {
+                str(k)[0].upper(): batch[Modality.from_str(k)].to(device=device)
+                for k in self.encoders.keys()
+            }
+            m_kwargs = {
+                **encoder_data,
+                f"{str(self.target_modality)[0]}": rec_embd.to(device=device),
+                f"is_embd_{str(self.target_modality)[0]}": True,
+            }
+            logits = mm_model(**m_kwargs, device=device)
+            predictions = logits.argmax(dim=1)
+
+            ## compute all the losses
+            loss = criterion(logits, labels)
+            if self.binarize:
+                (
+                    binary_preds,
+                    binary_truth,
+                    non_zeros_mask,
+                ) = UttFusionModel.msa_binarize(predictions.cpu().numpy(), labels)
+
+                binary_preds = de_device(binary_preds)
+                binary_truth = de_device(binary_truth)
+                non_zeros_mask = de_device(non_zeros_mask)
+
+                miss_types = np.array(miss_type)
+                metrics = {}
+                for miss_type in set(miss_types):
+                    mask = miss_types == miss_type
+
+                    # Apply the mask to get values for the current miss type
+                    binary_preds_masked = binary_preds[mask]
+                    binary_truth_masked = binary_truth[mask]
+                    non_zeros_mask_masked = non_zeros_mask[mask]
+
+                    # Calculate metrics for all elements (including zeros)
+                    binary_metrics = self.metric_recorder.calculate_metrics(
+                        predictions=binary_preds_masked, targets=binary_truth_masked
+                    )
+
+                    # Calculate metrics for non-zero elements only using the non_zeros_mask
+                    non_zeros_binary_preds_masked = binary_preds_masked[
+                        non_zeros_mask_masked
+                    ]
+                    non_zeros_binary_truth_masked = binary_truth_masked[
+                        non_zeros_mask_masked
+                    ]
+
+                    non_zero_metrics = self.metric_recorder.calculate_metrics(
+                        predictions=non_zeros_binary_preds_masked,
+                        targets=non_zeros_binary_truth_masked,
+                    )
+
+                    # Store metrics in the metrics dictionary
+                    for k, v in binary_metrics.items():
+                        metrics[f"HasZero_{k}_{miss_type.replace('z', '').upper()}"] = v
+
+                    for k, v in non_zero_metrics.items():
+                        metrics[f"NonZero_{k}_{miss_type.replace('z', '').upper()}"] = v
+            else:
+                metrics = self.metric_recorder.calculate_metrics(predictions, labels)
+                miss_type = np.array(miss_type)
+
+                for m_type in set(miss_type):
+                    mask = miss_type == m_type
+                    mask_preds = predictions[mask]
+                    mask_labels = labels[mask]
+                    mask_metrics = self.metric_recorder.calculate_metrics(
+                        predictions=mask_preds,
+                        targets=mask_labels,
+                        skip_metrics=["ConfusionMatrix"],
+                    )
+                    for k, v in mask_metrics.items():
+                        metrics[f"{k}_{m_type.replace('z', '').upper()}"] = v
+            self.train()
+
+            return {
+                "loss": loss.item(),
+                **metrics,
+            }
 
     def train_step(
         self,

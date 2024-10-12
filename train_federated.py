@@ -20,7 +20,10 @@ from federated.server import FederatedCongruentServer
 from utils import SafeDict, display_training_metrics, display_validation_metrics
 from utils.metric_recorder import MetricRecorder
 
-add_modality("VIDEO")
+try:
+    add_modality("VIDEO")
+except ValueError as ve:
+    print(ve)
 
 console = Console()
 

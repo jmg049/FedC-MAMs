@@ -17,7 +17,7 @@ from torch.nn import (
 )
 from torch.nn.functional import softmax
 from torch.optim import Optimizer
-
+from itertools import chain
 from models import ConvBlock, ConvBlockArgs
 from utils.metric_recorder import MetricRecorder
 
@@ -165,6 +165,41 @@ class AVMNIST(Module):
     def flatten_parameters(self):
         pass
 
+    def freeze_irrelevant_parameters(self, modality: str | Modality):
+        if modality == Modality.AUDIO:
+            self.image_encoder.requires_grad_(False)
+            self.audio_encoder.requires_grad_(True)
+            self.net.requires_grad_(True)
+        elif modality == Modality.IMAGE:
+            self.audio_encoder.requires_grad_(False)
+            self.image_encoder.requires_grad_(True)
+            self.net.requires_grad_(True)
+
+    def get_relevant_parameters(self, modality: str | Modality):
+        if modality == Modality.AUDIO:
+            encoder = self.audio_encoder
+            prefix = "audio_encoder."
+        elif modality == Modality.IMAGE:
+            encoder = self.image_encoder
+            prefix = "image_encoder."
+        elif modality == Modality.MULTIMODAL:
+            return self.state_dict()
+        else:
+            raise ValueError(f"Unsupported modality: {modality}")
+
+        # Get encoder parameters
+        encoder_params = {
+            f"{prefix}{name}": param for name, param in encoder.state_dict().items()
+        }
+
+        # Get classifier parameters
+        classifier_params = {
+            f"net.{name}": param for name, param in self.net.state_dict().items()
+        }
+
+        # Combine encoder and classifier parameters
+        return {**encoder_params, **classifier_params}
+
     def forward(
         self,
         A: Tensor = None,
@@ -227,7 +262,7 @@ class AVMNIST(Module):
 
         logits = self.forward(A=A, I=I)
         loss = criterion(logits, labels)
-        loss.backward()
+        loss.backward(retain_graph=True)
         optimizer.step()
         predictions = softmax(logits, dim=1).argmax(dim=1)
 
